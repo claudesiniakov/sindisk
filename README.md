@@ -49,6 +49,7 @@ Sources/SinDiskCore   ядро без UI: сканер, анализ, дубли
 Sources/SinDisk       SwiftUI-приложение
 Tests/SinDiskCoreTests тесты ядра (swift test)
 scripts/build-app.sh  сборка .app и zip
+scripts/make-icon.py  рисует иконку Resources/AppIcon.png (кольцевая карта диска)
 ```
 
 ## Ещё не сделано (по ТЗ)
