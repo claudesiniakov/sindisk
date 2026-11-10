@@ -15,12 +15,16 @@ public struct CleanRequest: Sendable, Hashable {
     public let mode: CleanMode
     /// Для файлов: дата изменения на момент анализа. Если файл изменился — он пропускается.
     public let expectedModified: Date?
+    /// Для дубликатов: путь оставляемой копии. Перед удалением содержимое сверяется побайтно;
+    /// если копии больше не совпадают (или оставляемой нет) — файл пропускается.
+    public let mustMatch: String?
 
-    public init(path: String, size: Int64, mode: CleanMode = .trash, expectedModified: Date? = nil) {
+    public init(path: String, size: Int64, mode: CleanMode = .trash, expectedModified: Date? = nil, mustMatch: String? = nil) {
         self.path = path
         self.size = size
         self.mode = mode
         self.expectedModified = expectedModified
+        if case let .cloneOf(keeper) = mode { self.mustMatch = mustMatch ?? keeper } else { self.mustMatch = mustMatch }
     }
 }
 
@@ -175,6 +179,19 @@ public final class CleanEngine: @unchecked Sendable {
             record.status = .skipped
             record.message = "Файл изменился после анализа"
             return record
+        }
+
+        if let keeper = req.mustMatch {
+            guard keeper != req.path, fm.fileExists(atPath: keeper) else {
+                record.status = .skipped
+                record.message = "Оставляемая копия не найдена — файл не тронут"
+                return record
+            }
+            guard fm.contentsEqual(atPath: keeper, andPath: req.path) else {
+                record.status = .skipped
+                record.message = "Копии больше не совпадают — файл не тронут"
+                return record
+            }
         }
 
         do {

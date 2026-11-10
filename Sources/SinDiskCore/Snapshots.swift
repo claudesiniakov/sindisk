@@ -26,6 +26,10 @@ public struct ScanSnapshot: Codable, Sendable, Identifiable, Hashable {
         limit: Int = 20_000,
         date: Date = Date()
     ) -> ScanSnapshot {
+        TreeAccess.read { makeUnlocked(from: root, maxDepth: maxDepth, minSize: minSize, limit: limit, date: date) }
+    }
+
+    private static func makeUnlocked(from root: FileNode, maxDepth: Int, minSize: Int64, limit: Int, date: Date) -> ScanSnapshot {
         var sizes: [String: Int64] = [:]
         var queue: [(FileNode, String, Int)] = [(root, "", 0)]
         var head = 0

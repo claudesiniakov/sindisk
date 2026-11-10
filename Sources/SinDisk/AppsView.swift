@@ -117,6 +117,8 @@ private struct AppDetail: View {
                         Spacer()
                     }
 
+                    // Раз в секунду перепроверяем, запущено ли приложение (после «Завершить» плашка исчезнет).
+                    TimelineView(.periodic(from: .now, by: 1)) { _ in
                     if apps.runningApp(app) != nil {
                         HStack {
                             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
@@ -126,6 +128,7 @@ private struct AppDetail: View {
                         }
                         .padding(10)
                         .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                    }
                     }
 
                     HStack(spacing: 24) {

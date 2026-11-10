@@ -95,6 +95,10 @@ final class AppsModel {
 
     func uninstall(_ app: InstalledApp) {
         guard let owner else { return }
+        if checked.contains(app.path), runningApp(app) != nil {
+            owner.notice = "«\(app.name)» сейчас запущено. Завершите приложение и повторите удаление."
+            return
+        }
         let requests = files.filter { checked.contains($0.path) }
             .map { CleanRequest(path: $0.path, size: $0.size, mode: .trash) }
         let removesBundle = checked.contains(app.path)

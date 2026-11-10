@@ -154,3 +154,62 @@ final class SnapshotTests: XCTestCase {
         XCTAssertEqual(store.load(root: "/").count, 1, "Корни хранятся раздельно")
     }
 }
+
+final class SafetyFixTests: XCTestCase {
+    private func engine() -> CleanEngine {
+        CleanEngine(safety: SafetyGuard(home: "/nonexistent-home", ownBundlePath: nil), store: nil)
+    }
+
+    func testDuplicateIsKeptWhenKeeperChangedOrMissing() throws {
+        let t = try TempTree()
+        let keeper = try t.file("a/orig.bin", bytes: 100_000, seed: 5)
+        let dup = try t.file("b/copy.bin", bytes: 100_000, seed: 5)
+        // Оставляемая копия изменилась после поиска дубликатов.
+        try t.file("a/orig.bin", bytes: 100_000, seed: 6)
+
+        let clone = engine().clean([CleanRequest(path: dup, size: 100_000, mode: .cloneOf(keeper))], title: "t")
+        XCTAssertEqual(clone.records.first?.status, .skipped)
+        let trash = engine().clean([CleanRequest(path: dup, size: 100_000, mode: .trash, mustMatch: keeper)], title: "t")
+        XCTAssertEqual(trash.records.first?.status, .skipped)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dup), "Копия не тронута")
+
+        try FileManager.default.removeItem(atPath: keeper)
+        let gone = engine().clean([CleanRequest(path: dup, size: 100_000, mode: .trash, mustMatch: keeper)], title: "t")
+        XCTAssertEqual(gone.records.first?.status, .skipped)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dup), "Последняя копия не удаляется")
+    }
+
+    func testCachesOfRunningAppsAreNotPreselected() throws {
+        let t = try TempTree()
+        try t.file("Library/Caches/com.example.Browser/data", bytes: 9_000)
+        try t.file("Library/Caches/com.example.Browser.helper/data", bytes: 9_000)
+        try t.file("Library/Caches/com.example.Idle/data", bytes: 9_000)
+        let analyzer = Analyzer(home: t.root, runningBundleIDs: ["com.example.browser"])
+        let caches = try XCTUnwrap(analyzer.analyze(tree: DiskScanner().scan(path: t.root)).first { $0.category == .caches })
+        let byName = Dictionary(uniqueKeysWithValues: caches.items.map { ($0.name, $0) })
+        XCTAssertEqual(byName["com.example.Browser"]?.selectedByDefault, false)
+        XCTAssertEqual(byName["com.example.Browser.helper"]?.selectedByDefault, false)
+        XCTAssertNotNil(byName["com.example.Browser"]?.note)
+        XCTAssertEqual(byName["com.example.Idle"]?.selectedByDefault, true)
+    }
+
+    func testTreeCanBeReadWhileNodesAreDetached() throws {
+        let t = try TempTree()
+        for i in 0..<300 { try t.file("d\(i % 10)/f\(i).bin", bytes: 2_000) }
+        let root = DiskScanner().scan(path: t.root)
+        let victims = root.children.flatMap(\.children)
+        let query = SearchQuery.parse("*.bin")
+        let done = expectation(description: "readers")
+        DispatchQueue.global().async {
+            for _ in 0..<200 {
+                _ = SearchEngine.search(root: root, query: query)
+                _ = TreeStats.kindTotals(root)
+            }
+            done.fulfill()
+        }
+        for v in victims { v.detach() }
+        wait(for: [done], timeout: 60)
+        XCTAssertEqual(root.fileCount, 0)
+        XCTAssertEqual(root.size, 0)
+    }
+}

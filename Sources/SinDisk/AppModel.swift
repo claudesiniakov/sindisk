@@ -135,6 +135,8 @@ final class AppModel {
 
     // Очистка и история
     var cleaning = false
+    /// Короткое сообщение пользователю (показывается алертом).
+    var notice: String?
     var sessions: [CleanSession] = []
     var lastResult: CleanSession?
 
@@ -256,11 +258,12 @@ final class AppModel {
             oldFileAge: Double(oldDays > 0 ? oldDays : 365) * 86_400,
             oldDownloadsAge: Double(downloadsDays > 0 ? downloadsDays : 90) * 86_400
         )
+        let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
         Task {
             let result = await Task.detached(priority: .utility) {
                 Analyzer(home: home, settings: settings, appInstalled: { id in
                     NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) != nil
-                }).analyze(tree: tree)
+                }, runningBundleIDs: running).analyze(tree: tree)
             }.value
             self.categories = result
             self.selected = Set(result.flatMap(\.items).filter(\.selectedByDefault).map(\.path))
@@ -434,7 +437,8 @@ final class AppModel {
                 requests.append(CleanRequest(
                     path: f.path, size: f.size,
                     mode: useClones ? .cloneOf(keeper.path) : .trash,
-                    expectedModified: f.modified
+                    expectedModified: f.modified,
+                    mustMatch: keeper.path
                 ))
             }
         }
@@ -485,7 +489,11 @@ final class AppModel {
     // MARK: - Очистка
 
     func performClean(_ requests: [CleanRequest], title: String, completion: ((CleanSession) -> Void)? = nil) {
-        guard !requests.isEmpty, !cleaning else { return }
+        guard !requests.isEmpty else { return }
+        guard !cleaning else {
+            notice = "Сейчас идёт другая очистка. Дождитесь её завершения и повторите."
+            return
+        }
         cleaning = true
         let engine = engine
         Task {

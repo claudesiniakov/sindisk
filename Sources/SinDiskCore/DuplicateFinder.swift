@@ -131,7 +131,8 @@ public final class DuplicateFinder: @unchecked Sendable {
 
     public func find(in root: FileNode) -> [DuplicateGroup] {
         setPhase(.collecting, total: 0)
-        let bySize = Dictionary(grouping: collect(root), by: \.size).filter { $0.value.count > 1 }
+        let entries = TreeAccess.read { collect(root) }
+        let bySize = Dictionary(grouping: entries, by: \.size).filter { $0.value.count > 1 }
 
         // Отбрасываем жёсткие ссылки на один и тот же inode и собираем даты создания.
         var candidates: [(entry: Entry, created: Date?)] = []

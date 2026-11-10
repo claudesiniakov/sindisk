@@ -1,5 +1,29 @@
 import Foundation
 
+/// Блокировка «много читателей — один писатель» для дерева файлов: фоновые обходы (поиск,
+/// анализ, дубликаты, слепки) берут чтение, удаление узлов после очистки — запись.
+public enum TreeAccess {
+    private final class RWLock: @unchecked Sendable {
+        var lock = pthread_rwlock_t()
+        init() { pthread_rwlock_init(&lock, nil) }
+        deinit { pthread_rwlock_destroy(&lock) }
+    }
+
+    private static let shared = RWLock()
+
+    public static func read<T>(_ body: () throws -> T) rethrows -> T {
+        pthread_rwlock_rdlock(&shared.lock)
+        defer { pthread_rwlock_unlock(&shared.lock) }
+        return try body()
+    }
+
+    public static func write<T>(_ body: () throws -> T) rethrows -> T {
+        pthread_rwlock_wrlock(&shared.lock)
+        defer { pthread_rwlock_unlock(&shared.lock) }
+        return try body()
+    }
+}
+
 /// Узел дерева файловой системы. Размеры каталогов агрегированы по всему поддереву.
 public final class FileNode: Identifiable, @unchecked Sendable {
     public var id: ObjectIdentifier { ObjectIdentifier(self) }
@@ -104,16 +128,18 @@ public final class FileNode: Identifiable, @unchecked Sendable {
 
     /// Удаляет узел из дерева и пересчитывает размеры предков.
     public func detach() {
-        guard let parent else { return }
-        parent.children.removeAll { $0 === self }
-        var cur: FileNode? = parent
-        while let n = cur {
-            n.size -= size
-            n.logicalSize -= logicalSize
-            n.fileCount -= fileCount
-            cur = n.parent
+        TreeAccess.write {
+            guard let parent else { return }
+            parent.children.removeAll { $0 === self }
+            var cur: FileNode? = parent
+            while let n = cur {
+                n.size -= size
+                n.logicalSize -= logicalSize
+                n.fileCount -= fileCount
+                cur = n.parent
+            }
+            self.parent = nil
         }
-        self.parent = nil
     }
 
     func addChild(_ child: FileNode) {
@@ -145,6 +171,10 @@ public struct KindTotal: Identifiable, Hashable, Sendable {
 public enum TreeStats {
     /// Объём по типам файлов. Бандлы приложений учитываются целиком как «Приложения».
     public static func kindTotals(_ root: FileNode) -> [KindTotal] {
+        TreeAccess.read { kindTotalsUnlocked(root) }
+    }
+
+    private static func kindTotalsUnlocked(_ root: FileNode) -> [KindTotal] {
         var totals: [FileKind: Int64] = [:]
         var stack = [root]
         while let n = stack.popLast() {
@@ -167,6 +197,10 @@ public enum TreeStats {
 
     /// Самые большие файлы дерева.
     public static func largestFiles(_ root: FileNode, limit: Int = 50) -> [FileNode] {
+        TreeAccess.read { largestFilesUnlocked(root, limit: limit) }
+    }
+
+    private static func largestFilesUnlocked(_ root: FileNode, limit: Int) -> [FileNode] {
         var result: [FileNode] = []
         var minKept: Int64 = 0
         var stack = [root]

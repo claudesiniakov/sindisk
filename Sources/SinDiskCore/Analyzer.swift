@@ -111,6 +111,8 @@ public struct Analyzer: Sendable {
     public let settings: AnalyzerSettings
     public let safety: SafetyGuard
     public let appInstalled: @Sendable (String) -> Bool
+    /// Идентификаторы запущенных приложений: их кэши не отмечаются к удалению по умолчанию.
+    public let runningBundleIDs: Set<String>
 
     static let installerExtensions: Set<String> = ["dmg", "pkg", "mpkg", "iso", "xip"]
 
@@ -118,8 +120,10 @@ public struct Analyzer: Sendable {
         home: String = NSHomeDirectory(),
         settings: AnalyzerSettings = AnalyzerSettings(),
         safety: SafetyGuard? = nil,
-        appInstalled: @escaping @Sendable (String) -> Bool = { _ in true }
+        appInstalled: @escaping @Sendable (String) -> Bool = { _ in true },
+        runningBundleIDs: Set<String> = []
     ) {
+        self.runningBundleIDs = Set(runningBundleIDs.map { $0.lowercased() })
         self.home = home
         self.settings = settings
         self.safety = safety ?? SafetyGuard(home: home)
@@ -127,6 +131,16 @@ public struct Analyzer: Sendable {
     }
 
     public func analyze(tree: FileNode?, now: Date = Date()) -> [CategoryResult] {
+        TreeAccess.read { analyzeUnlocked(tree: tree, now: now) }
+    }
+
+    /// Папка кэша принадлежит запущенному приложению (имя — bundle ID или его продолжение).
+    func belongsToRunningApp(_ name: String) -> Bool {
+        let n = name.lowercased()
+        return runningBundleIDs.contains { n == $0 || n.hasPrefix($0 + ".") }
+    }
+
+    private func analyzeUnlocked(tree: FileNode?, now: Date) -> [CategoryResult] {
         var results: [CleanupCategory: [Candidate]] = [:]
         func add(_ c: Candidate?) {
             guard let c else { return }
@@ -135,7 +149,9 @@ public struct Analyzer: Sendable {
 
         // Кэши: по папке на приложение. Системные кэши Apple не отмечаются по умолчанию.
         for c in children("Library/Caches", tree) {
-            add(make(c, .caches, selected: !c.name.hasPrefix("com.apple.")))
+            let running = belongsToRunningApp(c.name)
+            add(make(c, .caches, selected: !running && !c.name.hasPrefix("com.apple."),
+                     note: running ? "Приложение запущено — закройте его перед очисткой" : nil))
         }
         for c in children("Library/Logs", tree) { add(make(c, .logs, selected: true)) }
         for c in children(".Trash", tree) { add(make(c, .trash, selected: true)) }

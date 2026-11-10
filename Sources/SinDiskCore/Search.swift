@@ -259,6 +259,10 @@ public enum SearchEngine {
         isCancelled: () -> Bool = { false }
     ) -> [SearchHit] {
         guard !query.isEmpty else { return [] }
+        return TreeAccess.read { searchUnlocked(root: root, query: query, limit: limit, isCancelled: isCancelled) }
+    }
+
+    private static func searchUnlocked(root: FileNode, query: SearchQuery, limit: Int, isCancelled: () -> Bool) -> [SearchHit] {
         let matcher = SearchMatcher(query)
         var found: [(FileNode, String)] = []
         var stack: [(FileNode, String)] = [(root, root.path)]

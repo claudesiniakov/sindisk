@@ -38,6 +38,11 @@ struct ContentView: View {
                 Text("SinDisk \(updater.currentVersionString) — самая свежая версия.")
             }
         }
+        .alert("SinDisk", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(model.notice ?? "")
+        }
         .sheet(item: $model.lastResult) { session in
             CleanResultView(session: session)
         }
