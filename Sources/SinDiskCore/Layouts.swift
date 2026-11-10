@@ -7,6 +7,10 @@ public struct TreemapTile: Sendable {
     public let node: FileNode
     public let rect: CGRect
     public let level: Int
+    /// Индекс ветки первого уровня (для раскраски).
+    public let branch: Int
+    /// Папка, внутри которой разложены её дети (рисуется рамкой с заголовком).
+    public let isContainer: Bool
 }
 
 public enum Treemap {
@@ -71,21 +75,33 @@ public enum Treemap {
         return result
     }
 
-    /// Вложенная раскладка: дети `root` и (для крупных папок) их дети.
-    public static func tiles(for root: FileNode, in rect: CGRect, levels: Int = 2, header: CGFloat = 18) -> [TreemapTile] {
+    /// Вложенная раскладка: папки раскрываются внутрь, пока плитка достаточно велика
+    /// (не глубже `levels`), — как в классических картах диска.
+    public static func tiles(
+        for root: FileNode,
+        in rect: CGRect,
+        levels: Int = 4,
+        header: CGFloat = 20,
+        minContainer: CGSize = CGSize(width: 90, height: 56)
+    ) -> [TreemapTile] {
         var out: [TreemapTile] = []
-        func visit(_ node: FileNode, _ area: CGRect, _ level: Int) {
+        func visit(_ node: FileNode, _ area: CGRect, _ level: Int, _ branch: Int?) {
             let kids = Array(node.children.lazy.filter { $0.size > 0 }.prefix(400))
             let rects = squarify(kids.map { Double($0.size) }, in: area)
-            for (kid, r) in zip(kids, rects) where r.width >= 2 && r.height >= 2 {
-                out.append(TreemapTile(node: kid, rect: r, level: level))
-                if level < levels, kid.isDirectory, !kid.children.isEmpty, r.width > 70, r.height > 48 {
+            for (index, pair) in zip(kids, rects).enumerated() {
+                let (kid, r) = pair
+                guard r.width >= 2, r.height >= 2 else { continue }
+                let b = branch ?? index
+                let container = level < levels && kid.isDirectory && !kid.children.isEmpty
+                    && r.width >= minContainer.width && r.height >= minContainer.height
+                out.append(TreemapTile(node: kid, rect: r, level: level, branch: b, isContainer: container))
+                if container {
                     let inner = CGRect(x: r.minX + 3, y: r.minY + header, width: r.width - 6, height: r.height - header - 3)
-                    visit(kid, inner, level + 1)
+                    visit(kid, inner, level + 1, b)
                 }
             }
         }
-        visit(root, rect, 1)
+        visit(root, rect, 1, nil)
         return out
     }
 }

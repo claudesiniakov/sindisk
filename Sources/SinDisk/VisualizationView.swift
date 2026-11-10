@@ -185,32 +185,43 @@ private struct MapLegend: View {
     ]
 
     var body: some View {
-        HStack(spacing: 14) {
-            if colorMode == .type {
-                ForEach(FileKind.allCases.filter { $0 != .folder }) { k in
-                    HStack(spacing: 4) {
-                        Circle().fill(k.color).frame(width: 8, height: 8)
-                        Text(k.title)
+        HStack(spacing: 12) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    if colorMode == .type {
+                        ForEach(FileKind.allCases.filter { $0 != .folder && $0 != .other }) { k in
+                            item(k.title, k.color)
+                        }
+                        item("Папки", branchColor(0, depth: 1), gradient: true)
+                    } else {
+                        Text("Изменено:").foregroundStyle(.secondary).fixedSize()
+                        ForEach(0..<Self.ages.count, id: \.self) { i in
+                            item(Self.ages[i].title, ageColor(Date().addingTimeInterval(-Self.ages[i].days * 86_400)))
+                        }
                     }
                 }
-                Text("Папки — оттенками ветки").foregroundStyle(.secondary)
-            } else {
-                Text("Изменено:")
-                ForEach(0..<Self.ages.count, id: \.self) { i in
-                    HStack(spacing: 4) {
-                        Circle().fill(ageColor(Date().addingTimeInterval(-Self.ages[i].days * 86_400)))
-                            .frame(width: 8, height: 8)
-                        Text(Self.ages[i].title)
-                    }
-                }
+                .padding(.vertical, 2)
             }
-            Spacer()
-            Text("Клик — открыть папку · клик в центре — вверх · правый клик — действия")
+            Image(systemName: "info.circle")
                 .foregroundStyle(.secondary)
+                .help("Клик — открыть папку · клик в центре колец или ⌘↑ — вверх · правый клик — действия с элементом")
         }
         .font(.caption)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 14)
+        .frame(height: 32)
+    }
+
+    private func item(_ title: String, _ color: Color, gradient: Bool = false) -> some View {
+        HStack(spacing: 5) {
+            RoundedRectangle(cornerRadius: 3)
+                .fill(gradient
+                      ? AnyShapeStyle(LinearGradient(colors: [branchColor(0, depth: 1), branchColor(3, depth: 1)],
+                                                     startPoint: .leading, endPoint: .trailing))
+                      : AnyShapeStyle(color))
+                .frame(width: 12, height: 10)
+            Text(title).lineLimit(1)
+        }
+        .fixedSize()
     }
 }
 
@@ -226,7 +237,7 @@ private struct HoverCard: View {
                 Text("в папке «\(n.displayName)»").foregroundStyle(.secondary)
             } else {
                 Text(n.displayName).font(.headline).lineLimit(1)
-                Text(ByteFormat.string(n.size)).monospacedDigit()
+                Text(ByteFormat.string(n.size)).font(.title3.weight(.semibold)).monospacedDigit()
                 if let p = n.parent, p.size > 0 {
                     Text("\(percent(n.size, p.size)) от «\(p.displayName)» · \(percent(n.size, root.size)) от всего")
                         .foregroundStyle(.secondary)
@@ -240,15 +251,16 @@ private struct HoverCard: View {
             }
         }
         .font(.callout)
-        .padding(10)
-        .frame(maxWidth: 260, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .shadow(radius: 4)
+        .padding(12)
+        .frame(maxWidth: 280, alignment: .leading)
+        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor)))
+        .shadow(color: .black.opacity(0.18), radius: 10, y: 3)
     }
 
     private func percent(_ a: Int64, _ b: Int64) -> String {
-        let v = Double(a) / Double(max(b, 1)) * 100
-        return v < 0.1 ? "<0,1%" : String(format: "%.1f%%", v)
+        let v = Double(a) / Double(max(b, 1))
+        return v < 0.001 ? "<0,1 %" : v.formatted(.percent.precision(.fractionLength(1)))
     }
 }
 
@@ -275,13 +287,25 @@ extension AppModel {
     }
 }
 
+/// Хорошо различимые оттенки для веток (шаг золотого сечения), глубже — чуть темнее.
+func branchColor(_ branch: Int, depth: Int) -> Color {
+    let hue = (0.58 + Double(branch) * 0.618_034).truncatingRemainder(dividingBy: 1)
+    return Color(hue: hue, saturation: 0.36 + 0.04 * Double(min(depth, 4)),
+                 brightness: max(0.68, 0.93 - 0.05 * Double(depth)))
+}
+
+/// Светлее на `amount` (для объёмной заливки плиток).
+func lighter(_ color: Color, by amount: CGFloat = 0.35) -> Color {
+    let ns = NSColor(color).usingColorSpace(.deviceRGB) ?? NSColor(color)
+    return Color(nsColor: ns.blended(withFraction: amount, of: .white) ?? ns)
+}
+
 func mapColor(for node: FileNode, branch: Int, depth: Int, colorMode: ColorMode, highlight: HighlightSet?) -> Color {
     var color: Color
     switch colorMode {
     case .type:
         if node.isDirectory, node.kind == .folder {
-            color = Color(hue: Double(branch % 10) / 10, saturation: 0.42,
-                          brightness: max(0.55, 0.92 - 0.06 * Double(depth)))
+            color = branchColor(branch, depth: depth)
         } else {
             color = node.kind.color
         }
@@ -398,32 +422,50 @@ struct TreemapView: View {
     var body: some View {
         GeometryReader { geo in
             let bounds = CGRect(origin: .zero, size: geo.size).insetBy(dx: 6, dy: 6)
-            let tiles = Treemap.tiles(for: focus, in: bounds, levels: 2)
+            let tiles = Treemap.tiles(for: focus, in: bounds)
             let highlight = model.highlightSet
             Canvas { ctx, _ in
-                let branchIndex = Dictionary(uniqueKeysWithValues: focus.children.enumerated().map { ($1.id, $0) })
+                let ink = Color.black.opacity(0.82)
+                let inkSoft = Color.black.opacity(0.55)
                 for tile in tiles {
                     let r = tile.rect.insetBy(dx: 1, dy: 1)
-                    guard r.width > 0, r.height > 0 else { continue }
-                    let shape = Path(roundedRect: r, cornerRadius: 3)
-                    let top = tile.level == 1 ? tile.node : (tile.node.parent ?? tile.node)
-                    let branch = branchIndex[top.id] ?? 0
-                    var fill = mapColor(for: tile.node, branch: branch, depth: tile.level, colorMode: colorMode, highlight: highlight)
-                    if tile.level == 1, tile.node.isDirectory, !tile.node.children.isEmpty, r.width > 70, r.height > 48 {
-                        fill = fill.opacity(0.35)
+                    guard r.width > 1, r.height > 1 else { continue }
+                    let base = mapColor(for: tile.node, branch: tile.branch, depth: tile.level,
+                                        colorMode: colorMode, highlight: highlight)
+                    let shape = Path(roundedRect: r, cornerRadius: tile.isContainer ? 6 : 4)
+                    if tile.isContainer {
+                        // Рамка папки: светлая подложка и заголовок «имя · размер».
+                        ctx.fill(shape, with: .color(base.opacity(0.22)))
+                        ctx.stroke(shape, with: .color(base.opacity(0.9)), lineWidth: 1)
+                        let headerRect = CGRect(x: r.minX + 6, y: r.minY + 3, width: r.width - 12, height: 15)
+                        let sizeText = Text(ByteFormat.string(tile.node.size)).font(.caption2.monospacedDigit())
+                        let showSize = r.width > 150
+                        ctx.draw(Text(tile.node.name).font(.caption.weight(.semibold)).foregroundStyle(.primary),
+                                 in: CGRect(x: headerRect.minX, y: headerRect.minY,
+                                            width: headerRect.width - (showSize ? 70 : 0), height: headerRect.height))
+                        if showSize {
+                            ctx.draw(sizeText.foregroundStyle(.secondary),
+                                     at: CGPoint(x: headerRect.maxX, y: headerRect.midY), anchor: .trailing)
+                        }
+                    } else {
+                        // Лист: объёмная заливка сверху вниз.
+                        ctx.fill(shape, with: .linearGradient(
+                            Gradient(colors: [lighter(base), base]),
+                            startPoint: CGPoint(x: r.minX, y: r.minY),
+                            endPoint: CGPoint(x: r.minX, y: r.maxY)))
+                        ctx.stroke(shape, with: .color(.black.opacity(0.08)), lineWidth: 0.5)
+                        if r.width > 48, r.height > 18 {
+                            ctx.draw(Text(tile.node.name).font(.caption.weight(.medium)).foregroundStyle(ink),
+                                     in: CGRect(x: r.minX + 5, y: r.minY + 3, width: r.width - 10, height: 15))
+                        }
+                        if r.width > 60, r.height > 36 {
+                            ctx.draw(Text(ByteFormat.string(tile.node.size)).font(.caption2.monospacedDigit())
+                                        .foregroundStyle(inkSoft),
+                                     in: CGRect(x: r.minX + 5, y: r.minY + 18, width: r.width - 10, height: 14))
+                        }
                     }
-                    ctx.fill(shape, with: .color(fill))
-                    ctx.stroke(shape, with: .color(Color(nsColor: .windowBackgroundColor)), lineWidth: 1)
                     if let h = hovered, h.node === tile.node {
-                        ctx.stroke(shape, with: .color(.primary), lineWidth: 2)
-                    }
-                    if r.width > 54, r.height > 16 {
-                        let label = Text(tile.node.name).font(tile.level == 1 ? .caption.weight(.semibold) : .caption2)
-                        ctx.draw(label, in: CGRect(x: r.minX + 4, y: r.minY + 2, width: r.width - 8, height: 14))
-                    }
-                    if tile.level == 1, r.width > 80, r.height > 34, tile.node.children.isEmpty || !tile.node.isDirectory {
-                        ctx.draw(Text(ByteFormat.string(tile.node.size)).font(.caption2).foregroundStyle(.secondary),
-                                 in: CGRect(x: r.minX + 4, y: r.minY + 16, width: r.width - 8, height: 14))
+                        ctx.stroke(shape, with: .color(.accentColor), lineWidth: 2.5)
                     }
                 }
             }
@@ -498,13 +540,28 @@ struct CleanupTrayView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Лоток очистки").font(.headline)
-                Text(model.tray.isEmpty ? "Правый клик по элементу → «Добавить в лоток»"
+                Text(model.tray.isEmpty ? "Объекты для удаления"
                                         : "\(model.tray.count) объектов · \(ByteFormat.string(model.trayTotal))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding(12)
             Divider()
+            if model.tray.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "tray")
+                        .font(.system(size: 34, weight: .light))
+                        .foregroundStyle(.tertiary)
+                    Text("Лоток пуст").font(.headline).foregroundStyle(.secondary)
+                    Text("Правый клик по плитке или кольцу → «Добавить в лоток очистки». Здесь соберётся всё, что вы решили удалить.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
             List {
                 ForEach(model.tray) { item in
                     HStack {
@@ -520,6 +577,7 @@ struct CleanupTrayView: View {
                         .buttonStyle(.plain)
                     }
                 }
+            }
             }
             Divider()
             HStack {

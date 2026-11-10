@@ -95,7 +95,9 @@ struct ScanStatusFooter: View {
                 Text(ByteFormat.string(model.progress.bytes))
                     .monospacedDigit()
             case .ready:
-                Text(model.displayPath(model.scanPath))
+                Label(model.scanPath == model.home ? "Домашняя папка"
+                      : model.scanPath == "/" ? "Macintosh HD" : model.displayPath(model.scanPath),
+                      systemImage: model.scanPath == model.home ? "house" : "internaldrive")
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if let root = model.root {
