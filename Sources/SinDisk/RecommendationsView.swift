@@ -15,12 +15,14 @@ struct RecommendationsView: View {
                 ContentUnavailableView("Чисто", systemImage: "checkmark.seal",
                                        description: Text("Ничего лишнего не найдено."))
             } else {
-                List {
-                    ForEach(model.categories) { result in
-                        CategorySection(result: result)
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(model.categories) { result in
+                            CategoryCard(result: result)
+                        }
                     }
+                    .padding(20)
                 }
-                .listStyle(.inset)
                 .safeAreaInset(edge: .bottom) { bottomBar }
             }
         }
@@ -70,64 +72,102 @@ struct RecommendationsView: View {
     }
 }
 
-private struct CategorySection: View {
+private struct CategoryCard: View {
     @Environment(AppModel.self) private var model
     let result: CategoryResult
     @State private var expanded = false
+    @State private var shown = 50
 
     var body: some View {
         let paths = result.items.map(\.path)
         let selectedCount = paths.filter { model.selected.contains($0) }.count
-        Section {
-            DisclosureGroup(isExpanded: $expanded) {
-                ForEach(result.items) { item in
-                    CandidateRow(item: item)
-                }
-            } label: {
-                HStack(spacing: 10) {
-                    Button {
-                        if selectedCount == paths.count {
-                            model.selected.subtract(paths)
-                        } else {
-                            model.selected.formUnion(paths)
-                        }
-                    } label: {
-                        Image(systemName: selectedCount == 0 ? "square"
-                              : selectedCount == paths.count ? "checkmark.square.fill" : "minus.square.fill")
-                            .font(.title3)
-                            .foregroundStyle(selectedCount == 0 ? Color.secondary : Color.accentColor)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(selectedCount == paths.count ? "Снять выбор" : "Выбрать всё")
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                    .frame(width: 14)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack {
-                            Text(result.category.title).font(.headline)
-                            RiskBadge(risk: result.category.risk)
-                        }
-                        Text(result.category.detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                Button {
+                    if selectedCount == paths.count {
+                        model.selected.subtract(paths)
+                    } else {
+                        model.selected.formUnion(paths)
                     }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(ByteFormat.string(result.total))
-                            .font(.headline)
-                            .monospacedDigit()
-                        Text("\(selectedCount) из \(paths.count)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                } label: {
+                    Image(systemName: selectedCount == 0 ? "square"
+                          : selectedCount == paths.count ? "checkmark.square.fill" : "minus.square.fill")
+                        .font(.title2)
+                        .foregroundStyle(selectedCount == 0 ? Color.secondary : Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(selectedCount == paths.count ? "Снять выбор" : "Выбрать всё")
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(result.category.title).font(.headline)
+                        RiskBadge(risk: result.category.risk)
+                    }
+                    Text(result.category.detail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 12)
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(ByteFormat.string(result.total))
+                        .font(.headline)
+                        .monospacedDigit()
+                    Text("выбрано \(selectedCount) из \(paths.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() }
+            }
+
+            if expanded {
+                Divider()
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(result.items.prefix(shown).enumerated()), id: \.element.id) { index, item in
+                        if index > 0 { Divider().padding(.leading, 70) }
+                        CandidateRow(item: item)
+                            .padding(.leading, 42)
+                            .padding(.trailing, 16)
+                            .padding(.vertical, 6)
+                    }
+                    if result.items.count > shown {
+                        Divider()
+                        Button("Показать ещё \(min(100, result.items.count - shown)) из \(result.items.count - shown)") {
+                            shown += 100
+                        }
+                        .buttonStyle(.link)
+                        .padding(10)
                     }
                 }
-                .padding(.vertical, 4)
             }
         }
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.12)))
     }
 }
 
 private struct CandidateRow: View {
     @Environment(AppModel.self) private var model
     let item: Candidate
+
+    /// Путь и пояснение; пояснение не повторяет путь.
+    private var subtitle: String {
+        let path = model.displayPath(item.path)
+        guard let note = item.note, note != path else { return path }
+        return path + " · " + note
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -141,7 +181,7 @@ private struct CandidateRow: View {
             .toggleStyle(.checkbox)
             FileRowLabel(
                 name: item.name,
-                path: [model.displayPath(item.path), item.note].compactMap { $0 }.joined(separator: " · "),
+                path: subtitle,
                 kind: item.isDirectory ? .folder : FileKind(extension: (item.name as NSString).pathExtension)
             )
             Spacer()
