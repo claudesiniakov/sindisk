@@ -16,14 +16,12 @@ final class TempTree {
         let path = root + "/" + relative
         try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
                                                 withIntermediateDirectories: true)
-        var data = Data(count: bytes)
-        data.withUnsafeMutableBytes { buf in
-            for i in 0..<bytes { buf[i] = UInt8(truncatingIfNeeded: i &* 31 &+ Int(seed)) }
-        }
+        var bytesArray = [UInt8](repeating: 0, count: bytes)
+        for i in 0..<bytes { bytesArray[i] = UInt8(truncatingIfNeeded: i &* 31 &+ Int(seed)) }
         if let tail, bytes > 0 {
-            data[bytes / 2] = tail
+            bytesArray[bytes / 2] = tail
         }
-        try data.write(to: URL(fileURLWithPath: path))
+        try Data(bytesArray).write(to: URL(fileURLWithPath: path))
         return path
     }
 
