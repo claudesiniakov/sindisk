@@ -34,6 +34,17 @@ public struct CleanRecord: Codable, Identifiable, Sendable, Hashable {
     public let mode: CleanMode
     public var status: Status
     public var message: String?
+
+    public init(id: UUID = UUID(), originalPath: String, trashedPath: String? = nil, size: Int64,
+                mode: CleanMode, status: Status, message: String? = nil) {
+        self.id = id
+        self.originalPath = originalPath
+        self.trashedPath = trashedPath
+        self.size = size
+        self.mode = mode
+        self.status = status
+        self.message = message
+    }
 }
 
 public struct CleanSession: Codable, Identifiable, Sendable, Hashable {
@@ -42,6 +53,14 @@ public struct CleanSession: Codable, Identifiable, Sendable, Hashable {
     public let title: String
     public var records: [CleanRecord]
     public var undone: Bool
+
+    public init(id: UUID = UUID(), date: Date = Date(), title: String, records: [CleanRecord], undone: Bool = false) {
+        self.id = id
+        self.date = date
+        self.title = title
+        self.records = records
+        self.undone = undone
+    }
 
     public var freed: Int64 {
         records.filter { $0.status == .done }.reduce(0) { $0 + $1.size }

@@ -42,7 +42,9 @@ public struct SafetyGuard: Sendable {
             "", "/Documents", "/Desktop", "/Downloads", "/Pictures", "/Movies", "/Music", "/Public",
             "/Applications", "/Library", "/Library/Caches", "/Library/Logs", "/Library/Application Support",
             "/Library/Developer", "/Library/Containers", "/Library/Group Containers", "/.Trash",
-            "/Library/Mobile Documents",
+            "/Library/Mobile Documents", "/Library/Preferences", "/Library/LaunchAgents",
+            "/Library/Saved Application State", "/Library/HTTPStorages", "/Library/WebKit",
+            "/Library/Application Scripts",
         ]
         for r in homeRoots { s.insert(home + r) }
         return s
@@ -51,7 +53,7 @@ public struct SafetyGuard: Sendable {
     var personalSubtrees: [String] {
         [
             "/Library/Keychains", "/Library/Messages", "/Library/Mail", "/Library/Accounts",
-            "/Library/Group Containers/group.com.apple.notes", "/Library/Preferences",
+            "/Library/Group Containers/group.com.apple.notes",
             "/Library/Cookies", "/Library/Safari",
         ].map { home + $0 } + ["/Library/Keychains"]
     }

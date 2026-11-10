@@ -17,6 +17,9 @@ struct OverviewView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .fixedSize(horizontal: false, vertical: true)
+                if model.changes.totalDelta != nil {
+                    ChangesSummaryCard()
+                }
                 if !model.kindTotals.isEmpty {
                     KindBreakdown()
                 }
@@ -320,6 +323,44 @@ private struct LargestFilesCard: View {
                     Button("Добавить в лоток очистки") { model.addToTray(node) }
                 }
             }
+        }
+    }
+}
+
+private struct ChangesSummaryCard: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let ch = model.changes
+        if let d = ch.totalDelta, let b = ch.baseline {
+            Button {
+                model.section = .changes
+            } label: {
+                HStack(spacing: 14) {
+                    Image(systemName: d > 0 ? "arrow.up.right.circle.fill" : "arrow.down.right.circle.fill")
+                        .font(.title)
+                        .foregroundStyle(d > 0 ? Color.red : Color.green)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("С прошлого сканирования (\(b.date.formatted(.relative(presentation: .named))))")
+                            .foregroundStyle(.secondary)
+                        Text(d == 0 ? "Без изменений" : (d > 0 ? "Занято больше на \(ByteFormat.string(d))" : "Освободилось \(ByteFormat.string(-d))"))
+                            .font(.title3.weight(.semibold))
+                    }
+                    Spacer()
+                    if let top = ch.changes.first(where: { $0.delta > 0 }) {
+                        VStack(alignment: .trailing, spacing: 3) {
+                            Text("Больше всего выросло").font(.caption).foregroundStyle(.secondary)
+                            Text("\(top.name) \(signed(top.delta))").font(.callout.weight(.medium)).lineLimit(1)
+                        }
+                    }
+                    Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.background.secondary, in: RoundedRectangle(cornerRadius: 14))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
 }

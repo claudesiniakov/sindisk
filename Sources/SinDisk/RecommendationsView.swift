@@ -17,6 +17,8 @@ struct RecommendationsView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 10) {
+                        DevToolsPanel()
+                            .padding(.bottom, 6)
                         ForEach(model.categories) { result in
                             CategoryCard(result: result)
                         }

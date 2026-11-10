@@ -36,7 +36,7 @@ struct VolumeInfo {
 @Observable
 final class AppModel {
     enum Section: String, Hashable, CaseIterable, Identifiable {
-        case overview, map, recommendations, duplicates, search, history
+        case overview, map, recommendations, apps, duplicates, changes, search, history
         var id: String { rawValue }
 
         var title: String {
@@ -44,7 +44,9 @@ final class AppModel {
             case .overview: return "Обзор"
             case .map: return "Карта диска"
             case .recommendations: return "Рекомендации"
+            case .apps: return "Приложения"
             case .duplicates: return "Дубликаты"
+            case .changes: return "Изменения"
             case .search: return "Поиск"
             case .history: return "История"
             }
@@ -55,7 +57,9 @@ final class AppModel {
             case .overview: return "gauge.with.dots.needle.33percent"
             case .map: return "chart.pie"
             case .recommendations: return "sparkles"
+            case .apps: return "square.grid.3x3.square"
             case .duplicates: return "doc.on.doc"
+            case .changes: return "chart.line.uptrend.xyaxis"
             case .search: return "magnifyingglass"
             case .history: return "clock.arrow.circlepath"
             }
@@ -68,6 +72,9 @@ final class AppModel {
     let safety = SafetyGuard()
     let store: SessionStore
     let engine: CleanEngine
+    let apps = AppsModel()
+    let devTools = DevToolsModel()
+    let changes = ChangesModel()
 
     // Навигация
     var section: Section? = .overview
@@ -147,6 +154,8 @@ final class AppModel {
         store.prune()
         sessions = store.load()
         refreshAccess()
+        apps.owner = self
+        devTools.owner = self
     }
 
     // MARK: - Доступ и объём
@@ -224,6 +233,7 @@ final class AppModel {
             self.clearHighlight()
             self.volume = VolumeInfo.current()
             self.runAnalysis()
+            self.changes.record(tree)
         }
     }
 
@@ -464,7 +474,7 @@ final class AppModel {
 
     // MARK: - Очистка
 
-    func performClean(_ requests: [CleanRequest], title: String) {
+    func performClean(_ requests: [CleanRequest], title: String, completion: ((CleanSession) -> Void)? = nil) {
         guard !requests.isEmpty, !cleaning else { return }
         cleaning = true
         let engine = engine
@@ -477,6 +487,7 @@ final class AppModel {
             self.lastResult = session
             self.cleaning = false
             self.volume = VolumeInfo.current()
+            completion?(session)
         }
     }
 

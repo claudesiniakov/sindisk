@@ -48,7 +48,9 @@ struct ContentView: View {
         case .overview: OverviewView()
         case .map: VisualizationView()
         case .recommendations: RecommendationsView()
+        case .apps: AppsView()
         case .duplicates: DuplicatesView()
+        case .changes: ChangesView()
         case .search: SearchView()
         case .history: HistoryView()
         }
