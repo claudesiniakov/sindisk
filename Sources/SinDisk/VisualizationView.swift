@@ -569,6 +569,7 @@ struct CleanupTrayView: View {
                                      kind: item.isDirectory ? .folder : FileKind(extension: (item.path as NSString).pathExtension))
                         Spacer()
                         Text(ByteFormat.string(item.size)).font(.caption).monospacedDigit()
+                        RowActions(path: item.path, showMap: false)
                         Button {
                             model.tray.removeAll { $0.path == item.path }
                         } label: {

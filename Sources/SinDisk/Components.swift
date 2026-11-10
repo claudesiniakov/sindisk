@@ -1,4 +1,5 @@
 import SwiftUI
+import Quartz
 import SinDiskCore
 
 extension FileKind {
@@ -104,4 +105,71 @@ struct FileRowLabel: View {
 
 extension Date {
     var shortString: String { formatted(date: .abbreviated, time: .omitted) }
+}
+
+// MARK: - Быстрый просмотр и действия с файлом
+
+/// Quick Look для произвольных путей (как пробел в Finder).
+final class QuickLook: NSObject, QLPreviewPanelDataSource {
+    static let shared = QuickLook()
+    private var urls: [URL] = []
+
+    func show(_ paths: [String]) {
+        urls = paths.map { URL(fileURLWithPath: $0) }
+        guard !urls.isEmpty, let panel = QLPreviewPanel.shared() else { return }
+        panel.dataSource = self
+        panel.reloadData()
+        panel.currentPreviewItemIndex = 0
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+        urls.count
+    }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        urls[index] as NSURL
+    }
+}
+
+/// Кнопки на строке файла: быстрый просмотр, Finder, карта диска.
+struct RowActions: View {
+    @Environment(AppModel.self) private var model
+    let path: String
+    var showMap = true
+
+    var body: some View {
+        HStack(spacing: 0) {
+            action("eye", "Быстрый просмотр") { QuickLook.shared.show([path]) }
+            action("folder", "Показать в Finder") { model.reveal([path]) }
+            if showMap {
+                action("chart.pie", "Показать на карте диска") { model.highlight(paths: [path]) }
+            }
+        }
+    }
+
+    private func action(_ symbol: String, _ help: String, _ run: @escaping () -> Void) -> some View {
+        Button(action: run) {
+            Image(systemName: symbol)
+                .frame(width: 26, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+/// Контекстное меню строки файла — те же действия плюс «Открыть».
+struct FileContextMenu: View {
+    @Environment(AppModel.self) private var model
+    let path: String
+
+    var body: some View {
+        Button("Быстрый просмотр") { QuickLook.shared.show([path]) }
+        Button("Показать в Finder") { model.reveal([path]) }
+        Button("Открыть") { model.openItem(path) }
+        Button("Показать на карте диска") { model.highlight(paths: [path]) }
+    }
 }

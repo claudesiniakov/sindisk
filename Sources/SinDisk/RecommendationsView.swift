@@ -193,11 +193,11 @@ private struct CandidateRow: View {
             Text(ByteFormat.string(item.size))
                 .monospacedDigit()
                 .frame(width: 80, alignment: .trailing)
+            RowActions(path: item.path)
         }
-        .contextMenu {
-            Button("Показать в Finder") { model.reveal([item.path]) }
-            Button("Открыть") { model.openItem(item.path) }
-            Button("Показать на карте") { model.highlight(paths: [item.path]) }
-        }
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { model.reveal([item.path]) }
+        .contextMenu { FileContextMenu(path: item.path) }
+        .help("Двойной клик — показать в Finder")
     }
 }

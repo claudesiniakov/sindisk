@@ -97,11 +97,17 @@ struct SearchView: View {
                 .width(min: 80, ideal: 110)
             }
             .contextMenu(forSelectionType: SearchHit.ID.self) { ids in
+                Button("Быстрый просмотр") { QuickLook.shared.show(Array(ids)) }
                 Button("Показать в Finder") { model.reveal(Array(ids)) }
                 Button("Показать на карте") { model.highlight(paths: Array(ids)) }
                 Button("Добавить в лоток очистки") { addToTray(ids) }
             } primaryAction: { ids in
                 model.reveal(Array(ids))
+            }
+            .onKeyPress(.space) {
+                guard !selection.isEmpty else { return .ignored }
+                QuickLook.shared.show(Array(selection))
+                return .handled
             }
             Divider()
             HStack {
@@ -116,6 +122,12 @@ struct SearchView: View {
                 Button(selection.isEmpty ? "Все на карте" : "Выбранные на карте") {
                     model.highlight(paths: Array(targets))
                 }
+                Button {
+                    QuickLook.shared.show(Array(selection))
+                } label: {
+                    Label("Просмотр", systemImage: "eye")
+                }
+                .disabled(selection.isEmpty)
                 Button("Показать в Finder") { model.reveal(Array(selection)) }
                     .disabled(selection.isEmpty)
                 Button("В лоток очистки") { addToTray(selection) }

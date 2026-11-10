@@ -310,9 +310,13 @@ private struct LargestFilesCard: View {
                     Text(ByteFormat.string(node.size))
                         .monospacedDigit()
                         .frame(width: 80, alignment: .trailing)
+                    RowActions(path: node.path)
                 }
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { model.reveal([node.path]) }
                 .contextMenu {
-                    Button("Показать в Finder") { model.reveal([node.path]) }
+                    FileContextMenu(path: node.path)
+                    Divider()
                     Button("Добавить в лоток очистки") { model.addToTray(node) }
                 }
             }

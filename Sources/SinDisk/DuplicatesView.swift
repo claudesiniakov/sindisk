@@ -270,20 +270,7 @@ private struct FileCopyRow: View {
                 .foregroundStyle(.secondary)
             }
             Spacer()
-            Button {
-                model.reveal([file.path])
-            } label: {
-                Image(systemName: "magnifyingglass")
-            }
-            .buttonStyle(.borderless)
-            .help("Показать в Finder")
-            Button {
-                model.openItem(file.path)
-            } label: {
-                Image(systemName: "eye")
-            }
-            .buttonStyle(.borderless)
-            .help("Открыть")
+            RowActions(path: file.path)
         }
         .padding(10)
         .background(
@@ -294,6 +281,9 @@ private struct FileCopyRow: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(marked ? Color.secondary.opacity(0.3) : Color.accentColor, lineWidth: marked ? 1 : 1.5)
         )
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { model.reveal([file.path]) }
+        .contextMenu { FileContextMenu(path: file.path) }
     }
 }
 
