@@ -12,8 +12,11 @@ struct OverviewView: View {
                 }
                 HStack(alignment: .top, spacing: 20) {
                     VolumeCard()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     ScanCard()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+                .fixedSize(horizontal: false, vertical: true)
                 if !model.kindTotals.isEmpty {
                     KindBreakdown()
                 }
@@ -36,13 +39,13 @@ private struct Card<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             Text(title).font(.headline)
             content
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 14))
     }
 }
 
@@ -78,37 +81,50 @@ private struct VolumeCard: View {
     var body: some View {
         Card(title: "Macintosh HD") {
             if let v = model.volume {
-                HStack(spacing: 20) {
+                let usedShare = Double(v.used) / Double(max(v.total, 1))
+                HStack(alignment: .center, spacing: 28) {
                     ZStack {
-                        Circle().stroke(.quaternary, lineWidth: 14)
+                        Circle().stroke(Color.secondary.opacity(0.15), lineWidth: 16)
                         Circle()
-                            .trim(from: 0, to: CGFloat(Double(v.used) / Double(max(v.total, 1))))
-                            .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                            .trim(from: 0, to: CGFloat(usedShare))
+                            .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 16, lineCap: .round))
                             .rotationEffect(.degrees(-90))
                         VStack(spacing: 2) {
-                            Text("\(Int((Double(v.used) / Double(max(v.total, 1)) * 100).rounded()))%")
-                                .font(.title2.bold().monospacedDigit())
+                            Text(usedShare.formatted(.percent.precision(.fractionLength(0))))
+                                .font(.system(size: 30, weight: .bold, design: .rounded).monospacedDigit())
                             Text("занято").font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    .frame(width: 120, height: 120)
-                    Grid(alignment: .leading, verticalSpacing: 6) {
-                        row("Ёмкость", v.total)
-                        row("Занято", v.used)
-                        row("Свободно", v.available)
-                        row("Освобождаемое системой", v.purgeable)
+                    .frame(width: 132, height: 132)
+
+                    Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 10) {
+                        row("Ёмкость", v.total, dot: nil)
+                        Divider().gridCellColumns(2)
+                        row("Занято", v.used, dot: .accentColor)
+                        row("Свободно", v.available, dot: Color.secondary.opacity(0.3))
+                        row("Освобождаемое системой", v.purgeable, dot: nil, quiet: true)
                     }
+                    .frame(maxWidth: 380)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Text("Не удалось получить данные тома").foregroundStyle(.secondary)
             }
         }
     }
 
-    private func row(_ title: String, _ value: Int64) -> some View {
+    private func row(_ title: String, _ value: Int64, dot: Color?, quiet: Bool = false) -> some View {
         GridRow {
-            Text(title).foregroundStyle(.secondary)
-            Text(ByteFormat.string(value)).monospacedDigit()
+            HStack(spacing: 8) {
+                Circle().fill(dot ?? .clear).frame(width: 8, height: 8)
+                Text(title)
+            }
+            .foregroundStyle(quiet ? .secondary : .primary)
+            Text(ByteFormat.string(value))
+                .monospacedDigit()
+                .fontWeight(quiet ? .regular : .semibold)
+                .foregroundStyle(quiet ? .secondary : .primary)
+                .gridColumnAlignment(.trailing)
         }
     }
 }
@@ -123,22 +139,44 @@ private struct ScanCard: View {
                 Text("Просканируйте домашнюю папку или весь диск, чтобы увидеть, что занимает место.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                scanButtons
+                Spacer(minLength: 8)
+                Button {
+                    model.startScan(path: model.home)
+                } label: {
+                    Label("Сканировать домашнюю папку", systemImage: "house")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                secondaryScanButtons
             case .scanning:
                 ProgressView()
                     .progressViewStyle(.linear)
                 Text("\(model.progress.files.formatted()) файлов · \(ByteFormat.string(model.progress.bytes))")
+                    .font(.title3.weight(.semibold))
                     .monospacedDigit()
                 Text(model.displayPath(model.progress.currentPath))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Button("Остановить") { model.cancelScan() }
+                Spacer(minLength: 8)
+                Button {
+                    model.cancelScan()
+                } label: {
+                    Label("Остановить", systemImage: "stop.fill").frame(maxWidth: .infinity)
+                }
+                .controlSize(.large)
             case .ready:
                 if let root = model.root {
-                    Text("\(model.displayPath(model.scanPath)): \(ByteFormat.string(root.size))")
-                        .font(.title3.weight(.semibold))
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(model.scanPath == model.home ? "Домашняя папка" : model.displayPath(model.scanPath))
+                            .font(.title3.weight(.semibold))
+                        Spacer()
+                        Text(ByteFormat.string(root.size))
+                            .font(.title3.weight(.semibold))
+                            .monospacedDigit()
+                    }
                     Text("\(root.fileCount.formatted()) файлов · \(String(format: "%.1f", model.lastScanDuration)) с · недоступно папок: \(model.progress.unreadable)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -146,27 +184,52 @@ private struct ScanCard: View {
                 if model.analyzing {
                     ProgressView("Анализ…").controlSize(.small)
                 } else {
-                    Text("Безопасно освободить: \(ByteFormat.string(model.safeTotal))")
+                    Label("Безопасно освободить: \(ByteFormat.string(model.safeTotal))", systemImage: "leaf.fill")
                         .font(.headline)
                         .foregroundStyle(.green)
                 }
-                HStack {
-                    Button("Рекомендации") { model.section = .recommendations }
-                        .buttonStyle(.borderedProminent)
-                    Button("Карта диска") { model.section = .map }
+                Spacer(minLength: 8)
+                HStack(spacing: 10) {
+                    Button {
+                        model.section = .recommendations
+                    } label: {
+                        Label("Рекомендации", systemImage: "sparkles").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button {
+                        model.section = .map
+                    } label: {
+                        Label("Карта диска", systemImage: "chart.pie").frame(maxWidth: .infinity)
+                    }
                 }
-                scanButtons
+                .controlSize(.large)
+                secondaryScanButtons
             }
         }
     }
 
-    private var scanButtons: some View {
-        HStack {
-            Button("Домашняя папка") { model.startScan(path: model.home) }
-            Button("Весь диск") { model.startScan(path: "/") }
-            Button("Папка…") { model.chooseFolderAndScan() }
+    /// Другие варианты сканирования — одинаковые кнопки на всю ширину.
+    private var secondaryScanButtons: some View {
+        HStack(spacing: 10) {
+            if model.phase == .ready {
+                Button {
+                    model.startScan()
+                } label: {
+                    Label("Заново", systemImage: "arrow.clockwise").frame(maxWidth: .infinity)
+                }
+            }
+            Button {
+                model.startScan(path: "/")
+            } label: {
+                Label("Весь диск", systemImage: "internaldrive").frame(maxWidth: .infinity)
+            }
+            Button {
+                model.chooseFolderAndScan()
+            } label: {
+                Label("Выбрать папку…", systemImage: "folder").frame(maxWidth: .infinity)
+            }
         }
-        .controlSize(.small)
+        .controlSize(.large)
     }
 }
 
