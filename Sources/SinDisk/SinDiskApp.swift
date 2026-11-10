@@ -6,15 +6,22 @@ import SinDiskCore
 struct SinDiskApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var model = AppModel()
+    @State private var updater = Updater()
     @AppStorage("showMenuBar") private var showMenuBar = true
 
     var body: some Scene {
         WindowGroup("SinDisk", id: "main") {
             ContentView()
                 .environment(model)
+                .environment(updater)
                 .frame(minWidth: 1000, minHeight: 640)
+                .task { await updater.checkOnLaunch() }
         }
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Проверить обновления…") { Task { await updater.check(userInitiated: true) } }
+                    .disabled(updater.isBusy)
+            }
             CommandGroup(after: .newItem) {
                 Button("Сканировать домашнюю папку") { model.startScan(path: NSHomeDirectory()) }
                     .keyboardShortcut("r")
@@ -39,11 +46,13 @@ struct SinDiskApp: App {
         Settings {
             SettingsView()
                 .environment(model)
+                .environment(updater)
         }
 
         MenuBarExtra(isInserted: $showMenuBar) {
             MenuBarContent()
                 .environment(model)
+                .environment(updater)
         } label: {
             Label(model.menuBarTitle, systemImage: "internaldrive")
         }
@@ -63,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct MenuBarContent: View {
     @Environment(AppModel.self) private var model
+    @Environment(Updater.self) private var updater
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -84,7 +94,19 @@ struct MenuBarContent: View {
             NSApp.activate(ignoringOtherApps: true)
         }
         Divider()
-        Button("Обновить") { model.refreshAccess() }
+        if case let .available(release) = updater.state {
+            Button("Установить обновление \(release.version.description)…") {
+                updater.showSheet = true
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        }
+        Button("Проверить обновления…") {
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+            Task { await updater.check(userInitiated: true) }
+        }
+        Button("Обновить данные о диске") { model.refreshAccess() }
         Button("Выйти") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
     }
@@ -109,6 +131,7 @@ struct SettingsView: View {
             Section("Интерфейс") {
                 Toggle("Показывать в строке меню", isOn: $showMenuBar)
             }
+            UpdateSettingsSection()
         }
         .formStyle(.grouped)
         .frame(width: 440)

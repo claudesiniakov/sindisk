@@ -3,9 +3,11 @@ import SinDiskCore
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
+    @Environment(Updater.self) private var updater
 
     var body: some View {
         @Bindable var model = model
+        @Bindable var updater = updater
         NavigationSplitView {
             List(AppModel.Section.allCases, selection: $model.section) { section in
                 Label(section.title, systemImage: section.icon)
@@ -26,6 +28,14 @@ struct ContentView: View {
                 ToolbarItemGroup(placement: .primaryAction) {
                     ScanToolbar()
                 }
+            }
+            .sheet(isPresented: $updater.showSheet) {
+                UpdateSheet().environment(updater)
+            }
+            .alert("Установлена последняя версия", isPresented: $updater.showUpToDate) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("SinDisk \(updater.currentVersionString) — самая свежая версия.")
             }
         }
         .sheet(item: $model.lastResult) { session in

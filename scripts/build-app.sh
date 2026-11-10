@@ -3,7 +3,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null | sed 's/^v//' || echo 0.1.0)}"
+# Версия — из последнего тега vX.Y.Z, номер сборки — число коммитов.
+VERSION="${VERSION:-$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//')}"
+VERSION="${VERSION:-0.0.0}"
+BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 APP="build/SinDisk.app"
 
 swift build -c release --arch arm64
@@ -23,7 +26,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>SinDisk</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
-  <key>CFBundleVersion</key><string>${VERSION}</string>
+  <key>CFBundleVersion</key><string>${BUILD_NUMBER}</string>
   <key>CFBundleDevelopmentRegion</key><string>ru</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
@@ -38,4 +41,6 @@ codesign --force --deep --options runtime --sign - "$APP"
 codesign --verify --verbose "$APP"
 
 ditto -c -k --keepParent "$APP" build/SinDisk.zip
-echo "Готово: $APP и build/SinDisk.zip (версия $VERSION)"
+# Контрольная сумма для проверки обновления внутри приложения.
+(cd build && shasum -a 256 SinDisk.zip > SinDisk.zip.sha256)
+echo "Готово: $APP и build/SinDisk.zip (версия $VERSION, сборка $BUILD_NUMBER)"
