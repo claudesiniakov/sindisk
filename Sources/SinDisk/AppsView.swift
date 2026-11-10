@@ -33,7 +33,7 @@ struct AppsView: View {
                     if apps.loading && apps.apps.isEmpty { ProgressView("Поиск приложений…") }
                 }
                 Divider()
-                Text(apps.measuring ? "Подсчёт размеров…" : "\(apps.apps.count) приложений · без встроенных приложений Apple")
+                Text(apps.measuring ? "Подсчёт размеров…" : "\(Plural.count(apps.apps.count, "приложение", "приложения", "приложений")) · без встроенных приложений Apple")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(8)
@@ -74,7 +74,9 @@ private struct AppRow: View {
             AppIcon(path: app.path)
             VStack(alignment: .leading, spacing: 1) {
                 Text(app.name).lineLimit(1)
-                Text(app.lastUsed.map { "Запуск: \($0.shortString)" } ?? (app.version.map { "Версия \($0)" } ?? ""))
+                Text([app.version.map { "Версия \($0)" }, app.lastUsed.map { "запуск \($0.shortString)" }]
+                    .compactMap { $0 }.joined(separator: " · "))
+                    .lineLimit(1)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

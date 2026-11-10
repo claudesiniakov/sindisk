@@ -105,9 +105,9 @@ private struct VolumeCard: View {
                         Divider().gridCellColumns(2)
                         row("Занято", v.used, dot: .accentColor)
                         row("Свободно", v.available, dot: Color.secondary.opacity(0.3))
-                        row("Освобождаемое системой", v.purgeable, dot: nil, quiet: true)
+                        row("Очищаемое", v.purgeable, dot: nil, quiet: true,
+                            help: "Место, которое macOS освободит сама, когда оно понадобится (кэши, локальные снимки)")
                     }
-                    .frame(maxWidth: 380)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
@@ -116,13 +116,14 @@ private struct VolumeCard: View {
         }
     }
 
-    private func row(_ title: String, _ value: Int64, dot: Color?, quiet: Bool = false) -> some View {
+    private func row(_ title: String, _ value: Int64, dot: Color?, quiet: Bool = false, help: String = "") -> some View {
         GridRow {
             HStack(spacing: 8) {
                 Circle().fill(dot ?? .clear).frame(width: 8, height: 8)
-                Text(title)
+                Text(title).lineLimit(1).fixedSize()
             }
             .foregroundStyle(quiet ? .secondary : .primary)
+            .help(help)
             Text(ByteFormat.string(value))
                 .monospacedDigit()
                 .fontWeight(quiet ? .regular : .semibold)
@@ -155,7 +156,7 @@ private struct ScanCard: View {
             case .scanning:
                 ProgressView()
                     .progressViewStyle(.linear)
-                Text("\(model.progress.files.formatted()) файлов · \(ByteFormat.string(model.progress.bytes))")
+                Text("\(Plural.count(model.progress.files, "файл", "файла", "файлов")) · \(ByteFormat.string(model.progress.bytes))")
                     .font(.title3.weight(.semibold))
                     .monospacedDigit()
                 Text(model.displayPath(model.progress.currentPath))
@@ -180,7 +181,7 @@ private struct ScanCard: View {
                             .font(.title3.weight(.semibold))
                             .monospacedDigit()
                     }
-                    Text("\(root.fileCount.formatted()) файлов · \(String(format: "%.1f", model.lastScanDuration)) с · недоступно папок: \(model.progress.unreadable)")
+                    Text("\(Plural.count(root.fileCount, "файл", "файла", "файлов")) · \(String(format: "%.1f", model.lastScanDuration)) с · недоступно папок: \(model.progress.unreadable)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

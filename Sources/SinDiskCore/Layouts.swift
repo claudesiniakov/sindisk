@@ -9,6 +9,8 @@ public struct TreemapTile: Sendable {
     public let level: Int
     /// Индекс ветки первого уровня (для раскраски).
     public let branch: Int
+    /// Индекс подветки второго уровня внутри ветки; −1 для плиток первого уровня.
+    public let sub: Int
     /// Папка, внутри которой разложены её дети (рисуется рамкой с заголовком).
     public let isContainer: Bool
 }
@@ -85,23 +87,24 @@ public enum Treemap {
         minContainer: CGSize = CGSize(width: 90, height: 56)
     ) -> [TreemapTile] {
         var out: [TreemapTile] = []
-        func visit(_ node: FileNode, _ area: CGRect, _ level: Int, _ branch: Int?) {
+        func visit(_ node: FileNode, _ area: CGRect, _ level: Int, _ branch: Int?, _ sub: Int?) {
             let kids = Array(node.children.lazy.filter { $0.size > 0 }.prefix(400))
             let rects = squarify(kids.map { Double($0.size) }, in: area)
             for (index, pair) in zip(kids, rects).enumerated() {
                 let (kid, r) = pair
                 guard r.width >= 2, r.height >= 2 else { continue }
                 let b = branch ?? index
+                let s = branch == nil ? nil : (sub ?? index)
                 let container = level < levels && kid.isDirectory && !kid.children.isEmpty
                     && r.width >= minContainer.width && r.height >= minContainer.height
-                out.append(TreemapTile(node: kid, rect: r, level: level, branch: b, isContainer: container))
+                out.append(TreemapTile(node: kid, rect: r, level: level, branch: b, sub: s ?? -1, isContainer: container))
                 if container {
                     let inner = CGRect(x: r.minX + 3, y: r.minY + header, width: r.width - 6, height: r.height - header - 3)
-                    visit(kid, inner, level + 1, b)
+                    visit(kid, inner, level + 1, b, s)
                 }
             }
         }
-        visit(root, rect, 1, nil)
+        visit(root, rect, 1, nil, nil)
         return out
     }
 }
@@ -117,6 +120,8 @@ public struct SunburstArc: Sendable {
     public let end: Double
     /// Индекс ветки первого уровня (для раскраски).
     public let branch: Int
+    /// Индекс подветки второго уровня внутри ветки; −1 для первого кольца.
+    public let sub: Int
     /// > 0 — сегмент «Прочее», объединяющий столько мелких элементов папки `node`.
     public let otherCount: Int
 
@@ -126,7 +131,7 @@ public struct SunburstArc: Sendable {
 public enum Sunburst {
     public static func layout(root: FileNode, maxDepth: Int = 6, minAngle: Double = 0.006) -> [SunburstArc] {
         var arcs: [SunburstArc] = []
-        func visit(_ node: FileNode, depth: Int, start: Double, end: Double, branch: Int?) {
+        func visit(_ node: FileNode, depth: Int, start: Double, end: Double, branch: Int?, sub: Int?) {
             guard depth <= maxDepth, node.size > 0 else { return }
             let span = end - start
             var a = start
@@ -138,17 +143,18 @@ public enum Sunburst {
                 let w = span * Double(c.size) / Double(node.size)
                 if w < minAngle { break }
                 let b = branch ?? index
-                arcs.append(SunburstArc(node: c, depth: depth, start: a, end: a + w, branch: b, otherCount: 0))
-                if c.isDirectory { visit(c, depth: depth + 1, start: a, end: a + w, branch: b) }
+                let s = branch == nil ? nil : (sub ?? index)
+                arcs.append(SunburstArc(node: c, depth: depth, start: a, end: a + w, branch: b, sub: s ?? -1, otherCount: 0))
+                if c.isDirectory { visit(c, depth: depth + 1, start: a, end: a + w, branch: b, sub: s) }
                 a += w
                 index += 1
             }
             let rest = kids.count - index
             if rest > 0, end - a > 0.002 {
-                arcs.append(SunburstArc(node: node, depth: depth, start: a, end: end, branch: branch ?? index, otherCount: rest))
+                arcs.append(SunburstArc(node: node, depth: depth, start: a, end: end, branch: branch ?? index, sub: sub ?? -1, otherCount: rest))
             }
         }
-        visit(root, depth: 1, start: 0, end: 2 * .pi, branch: nil)
+        visit(root, depth: 1, start: 0, end: 2 * .pi, branch: nil, sub: nil)
         return arcs
     }
 

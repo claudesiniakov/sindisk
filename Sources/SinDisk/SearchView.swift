@@ -55,6 +55,7 @@ struct SearchView: View {
                     Divider()
                     results
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
         .navigationTitle("Поиск")
@@ -71,6 +72,7 @@ struct SearchView: View {
                                   ? "Ищите по имени и фильтрам. Подсказка — кнопка «?»."
                                   : "Попробуйте ослабить фильтры.")
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             Table(model.searchResults, selection: $selection) {
                 TableColumn("Имя") { hit in
@@ -165,6 +167,7 @@ private struct QueryChips: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        HStack(spacing: 8) {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(AppModel.presetQueries.indices, id: \.self) { i in
@@ -188,15 +191,17 @@ private struct QueryChips: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                Button {
-                    model.saveCurrentQuery()
-                } label: {
-                    Label("Сохранить запрос", systemImage: "plus")
-                }
-                .disabled(model.searchText.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            .controlSize(.small)
         }
+        Button {
+            model.saveCurrentQuery()
+        } label: {
+            Label("Сохранить запрос", systemImage: "plus")
+        }
+        .fixedSize()
+        .disabled(model.searchText.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        .controlSize(.small)
     }
 
     private func chip(_ title: String, query: String, icon: String) -> some View {

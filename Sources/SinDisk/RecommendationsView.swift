@@ -18,14 +18,14 @@ struct RecommendationsView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 10) {
-                        DevToolsPanel()
-                            .padding(.bottom, 6)
                         ForEach(model.categories) { result in
                             CategoryCard(result: result, expanded: Binding(
                                 get: { expanded.contains(result.category) },
                                 set: { if $0 { expanded.insert(result.category) } else { expanded.remove(result.category) } }
                             ))
                         }
+                        DevToolsPanel()
+                            .padding(.top, 6)
                     }
                     .padding(20)
                 }
@@ -47,7 +47,7 @@ struct RecommendationsView: View {
         let allExpanded = expanded.count == model.categories.count
         return HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Найдено \(ByteFormat.string(total)) в \(model.categories.count) категориях")
+                Text("Найдено \(ByteFormat.string(total)) в \(Plural.count(model.categories.count, "категории", "категориях", "категориях"))")
                     .font(.headline)
                     .monospacedDigit()
                 Text("Безопасно (низкий риск): \(ByteFormat.string(model.safeTotal))")
@@ -88,7 +88,7 @@ struct RecommendationsView: View {
                 Text(model.selected.isEmpty ? "Ничего не выбрано" : "Выбрано: \(ByteFormat.string(model.selectedTotal))")
                     .font(.headline)
                     .monospacedDigit()
-                Text(model.selected.isEmpty ? "Отметьте категории или воспользуйтесь меню «Выбрать»" : "\(model.selectedCandidates.count) объектов")
+                Text(model.selected.isEmpty ? "Отметьте категории или воспользуйтесь меню «Выбрать»" : "\(Plural.count(model.selectedCandidates.count, "объект", "объекта", "объектов"))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -105,14 +105,14 @@ struct RecommendationsView: View {
     }
 
     private var confirmTitle: String {
-        "Очистить \(model.selectedCandidates.count) объектов (\(ByteFormat.string(model.selectedTotal)))?"
+        "Очистить \(Plural.count(model.selectedCandidates.count, "объект", "объекта", "объектов")) (\(ByteFormat.string(model.selectedTotal)))?"
     }
 
     private var confirmMessage: String {
         let items = model.selectedCandidates
         var lines: [String] = []
         let high = items.filter { $0.category.risk == .high }.count
-        if high > 0 { lines.append("Высокий риск: \(high) объектов — проверьте их ещё раз.") }
+        if high > 0 { lines.append("Высокий риск: \(Plural.count(high, "объект", "объекта", "объектов")) — проверьте их ещё раз.") }
         let permanent = items.filter { $0.category.deletesPermanently }.count
         if permanent > 0 { lines.append("Содержимое Корзины (\(permanent)) будет удалено окончательно.") }
         lines.append("Остальное переместится в Корзину; отменить можно в «Истории».")

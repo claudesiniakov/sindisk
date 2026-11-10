@@ -76,12 +76,17 @@ struct VisualizationView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contextMenu { mapContextMenu }
-                    Divider()
-                    MapLegend(colorMode: colorMode)
+                    if mode != .list {
+                        Divider()
+                        MapLegend(colorMode: colorMode)
+                    }
                 }
                 .frame(minWidth: 560)
-                CleanupTrayView()
-                    .frame(minWidth: 240, idealWidth: 290, maxWidth: 380)
+                // Лоток появляется, когда в нём что-то есть: пустой он только отнимает место у карты.
+                if !model.tray.isEmpty {
+                    CleanupTrayView()
+                        .frame(minWidth: 240, idealWidth: 290, maxWidth: 380)
+                }
             }
             .navigationTitle("Карта диска")
         } else {
@@ -142,6 +147,8 @@ private struct MapHeader: View {
             Text(ByteFormat.string(focus.size))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
             Picker("Цвет", selection: $colorMode) {
                 ForEach(ColorMode.allCases) { Text($0.title).tag($0) }
             }
@@ -186,13 +193,15 @@ private struct MapLegend: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 16) {
+            // Сетка сама переносит элементы на вторую строку в узком окне — ничего не обрезается.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 12, alignment: .leading)],
+                      alignment: .leading, spacing: 4) {
+                Group {
                     if colorMode == .type {
                         ForEach(FileKind.allCases.filter { $0 != .folder && $0 != .other }) { k in
                             item(k.title, k.color)
                         }
-                        item("Папки", branchColor(0, depth: 1), gradient: true)
+                        item("Папки", branchColor(0, sub: -1, depth: 1), gradient: true)
                     } else {
                         Text("Изменено:").foregroundStyle(.secondary).fixedSize()
                         ForEach(0..<Self.ages.count, id: \.self) { i in
@@ -200,7 +209,6 @@ private struct MapLegend: View {
                         }
                     }
                 }
-                .padding(.vertical, 2)
             }
             Image(systemName: "info.circle")
                 .foregroundStyle(.secondary)
@@ -208,14 +216,14 @@ private struct MapLegend: View {
         }
         .font(.caption)
         .padding(.horizontal, 14)
-        .frame(height: 32)
+        .padding(.vertical, 7)
     }
 
     private func item(_ title: String, _ color: Color, gradient: Bool = false) -> some View {
         HStack(spacing: 5) {
             RoundedRectangle(cornerRadius: 3)
                 .fill(gradient
-                      ? AnyShapeStyle(LinearGradient(colors: [branchColor(0, depth: 1), branchColor(3, depth: 1)],
+                      ? AnyShapeStyle(LinearGradient(colors: [branchColor(0, sub: -1, depth: 1), branchColor(0, sub: 2, depth: 2), branchColor(1, sub: -1, depth: 1)],
                                                      startPoint: .leading, endPoint: .trailing))
                       : AnyShapeStyle(color))
                 .frame(width: 12, height: 10)
@@ -243,7 +251,7 @@ private struct HoverCard: View {
                         .foregroundStyle(.secondary)
                 }
                 if n.isDirectory {
-                    Text("\(n.fileCount.formatted()) файлов").foregroundStyle(.secondary)
+                    Text("\(Plural.count(n.fileCount, "файл", "файла", "файлов"))").foregroundStyle(.secondary)
                 }
                 if let m = n.modified {
                     Text("Изменён \(m.shortString)").foregroundStyle(.secondary)
@@ -288,8 +296,11 @@ extension AppModel {
 }
 
 /// Хорошо различимые оттенки для веток (шаг золотого сечения), глубже — чуть темнее.
-func branchColor(_ branch: Int, depth: Int) -> Color {
-    let hue = (0.58 + Double(branch) * 0.618_034).truncatingRemainder(dividingBy: 1)
+func branchColor(_ branch: Int, sub: Int, depth: Int) -> Color {
+    // Ветка задаёт базовый тон, подветка второго уровня сдвигает его — иначе одна большая
+    // папка (например, Library) закрашивает всю карту одним цветом.
+    let shift = sub >= 0 ? Double(sub + 1) * 0.085 : 0
+    let hue = (0.58 + Double(branch) * 0.618_034 + shift).truncatingRemainder(dividingBy: 1)
     return Color(hue: hue, saturation: 0.36 + 0.04 * Double(min(depth, 4)),
                  brightness: max(0.68, 0.93 - 0.05 * Double(depth)))
 }
@@ -300,12 +311,12 @@ func lighter(_ color: Color, by amount: CGFloat = 0.35) -> Color {
     return Color(nsColor: ns.blended(withFraction: amount, of: .white) ?? ns)
 }
 
-func mapColor(for node: FileNode, branch: Int, depth: Int, colorMode: ColorMode, highlight: HighlightSet?) -> Color {
+func mapColor(for node: FileNode, branch: Int, sub: Int, depth: Int, colorMode: ColorMode, highlight: HighlightSet?) -> Color {
     var color: Color
     switch colorMode {
     case .type:
         if node.isDirectory, node.kind == .folder {
-            color = branchColor(branch, depth: depth)
+            color = branchColor(branch, sub: sub, depth: depth)
         } else {
             color = node.kind.color
         }
@@ -352,12 +363,28 @@ struct SunburstView: View {
                     path.closeSubpath()
                     let fill: Color = arc.isOther
                         ? Color.gray.opacity(0.25)
-                        : mapColor(for: arc.node, branch: arc.branch, depth: arc.depth, colorMode: colorMode, highlight: highlight)
+                        : mapColor(for: arc.node, branch: arc.branch, sub: arc.sub, depth: arc.depth, colorMode: colorMode, highlight: highlight)
                     ctx.fill(path, with: .color(fill))
                     ctx.stroke(path, with: .color(separator), lineWidth: 0.6)
                     if let h = hovered, h.node === arc.node, h.otherCount == arc.otherCount {
                         ctx.stroke(path, with: .color(.primary), lineWidth: 2)
                     }
+                }
+                // Подписи на крупных сегментах: текст идёт вдоль дуги и не переворачивается.
+                for arc in arcs where !arc.isOther && arc.depth <= 4 && ring > 15 {
+                    let rMid = inner + ring * (CGFloat(arc.depth) - 0.5)
+                    let arcLength = CGFloat(arc.end - arc.start) * rMid
+                    let maxChars = Int((arcLength - 10) / 6.2)
+                    guard maxChars >= 4 else { continue }
+                    let name = arc.node.name
+                    let label = name.count > maxChars ? String(name.prefix(maxChars - 1)) + "…" : name
+                    let mid = (arc.start + arc.end) / 2
+                    var layer = ctx
+                    layer.translateBy(x: center.x + rMid * CGFloat(cos(mid - .pi / 2)),
+                                      y: center.y + rMid * CGFloat(sin(mid - .pi / 2)))
+                    layer.rotate(by: .radians(mid > .pi / 2 && mid < 1.5 * .pi ? mid + .pi : mid))
+                    layer.draw(Text(label).font(.caption2.weight(.medium)).foregroundStyle(Color.black.opacity(0.78)),
+                               at: .zero)
                 }
                 let centerCircle = Path(ellipseIn: CGRect(x: center.x - inner + 3, y: center.y - inner + 3,
                                                           width: (inner - 3) * 2, height: (inner - 3) * 2))
@@ -430,7 +457,7 @@ struct TreemapView: View {
                 for tile in tiles {
                     let r = tile.rect.insetBy(dx: 1, dy: 1)
                     guard r.width > 1, r.height > 1 else { continue }
-                    let base = mapColor(for: tile.node, branch: tile.branch, depth: tile.level,
+                    let base = mapColor(for: tile.node, branch: tile.branch, sub: tile.sub, depth: tile.level,
                                         colorMode: colorMode, highlight: highlight)
                     let shape = Path(roundedRect: r, cornerRadius: tile.isContainer ? 6 : 4)
                     if tile.isContainer {
@@ -499,6 +526,8 @@ struct NodeListView: View {
 
     var body: some View {
         let items = Array(focus.children.prefix(1000))
+        // Полоски — относительно самого большого элемента, иначе при одной огромной папке все пустые.
+        let largest = Double(max(items.first?.size ?? 1, 1))
         List(items, id: \.id) { node in
             HStack(spacing: 12) {
                 Image(systemName: node.kind.symbol)
@@ -508,14 +537,15 @@ struct NodeListView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                SizeBar(fraction: Double(node.size) / Double(max(focus.size, 1)), color: node.kind.color)
+                SizeBar(fraction: Double(node.size) / largest, color: node.kind.color)
                     .frame(width: 140)
                 Text(ByteFormat.string(node.size))
                     .monospacedDigit()
                     .frame(width: 80, alignment: .trailing)
-                if node.isDirectory {
-                    Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                }
+                // Место под стрелку есть у всех строк — колонки не «прыгают» между файлами и папками.
+                Image(systemName: "chevron.right")
+                    .foregroundStyle(.tertiary)
+                    .opacity(node.isDirectory ? 1 : 0)
             }
             .contentShape(Rectangle())
             .onTapGesture { model.open(node) }
@@ -541,7 +571,7 @@ struct CleanupTrayView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Лоток очистки").font(.headline)
                 Text(model.tray.isEmpty ? "Объекты для удаления"
-                                        : "\(model.tray.count) объектов · \(ByteFormat.string(model.trayTotal))")
+                                        : "\(Plural.count(model.tray.count, "объект", "объекта", "объектов")) · \(ByteFormat.string(model.trayTotal))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -591,7 +621,7 @@ struct CleanupTrayView: View {
             }
             .padding(12)
         }
-        .confirmationDialog("Переместить в Корзину \(model.tray.count) объектов (\(ByteFormat.string(model.trayTotal)))?",
+        .confirmationDialog("Переместить в Корзину \(Plural.count(model.tray.count, "объект", "объекта", "объектов")) (\(ByteFormat.string(model.trayTotal)))?",
                             isPresented: $confirm) {
             Button("Переместить в Корзину", role: .destructive) { model.cleanTray() }
         } message: {

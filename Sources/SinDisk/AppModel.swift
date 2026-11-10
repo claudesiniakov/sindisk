@@ -85,6 +85,9 @@ final class AppModel {
     var root: FileNode?
     var treeVersion = 0
     var treeIsStale = false
+    /// Дерево загружено из сохранённого прошлого сканирования (а не только что построено).
+    var restoredFromCache = false
+    var restoring = false
     var progress = ScanProgress()
     var lastScanDate: Date?
     var lastScanDuration: TimeInterval = 0
@@ -116,7 +119,7 @@ final class AppModel {
     var dupMinSize: Int64 = 1_000_000
     var dupMarked: Set<String> = []
     var keepRule: KeepRule = .oldest {
-        didSet { applyKeepRule() }
+        didSet { if !dupMarked.isEmpty { applyKeepRule() } }
     }
     @ObservationIgnored private var dupFinder: DuplicateFinder?
 
@@ -158,6 +161,7 @@ final class AppModel {
         refreshAccess()
         apps.owner = self
         devTools.owner = self
+        restoreLastScan()
     }
 
     // MARK: - Доступ и объём
@@ -188,6 +192,30 @@ final class AppModel {
         panel.prompt = "Сканировать"
         if panel.runModal() == .OK, let url = panel.url {
             startScan(path: url.path)
+        }
+    }
+
+    /// Открывает результат прошлого сканирования, чтобы приложение не начиналось с пустого экрана.
+    private func restoreLastScan() {
+        restoring = true
+        Task {
+            let cached = await Task.detached(priority: .userInitiated) { () -> (FileNode, Date, [KindTotal], [FileNode])? in
+                guard let c = TreeCache.load() else { return nil }
+                return (c.root, c.scannedAt, TreeStats.kindTotals(c.root), TreeStats.largestFiles(c.root, limit: 50))
+            }.value
+            self.restoring = false
+            guard let cached, self.root == nil, self.phase == .idle else { return }
+            self.root = cached.0
+            self.focus = cached.0
+            self.scanPath = cached.0.path
+            self.lastScanDate = cached.1
+            self.kindTotals = cached.2
+            self.largestFiles = cached.3
+            self.restoredFromCache = true
+            self.treeVersion += 1
+            self.phase = .ready
+            self.runAnalysis()
+            self.changes.load(root: cached.0.path)
         }
     }
 
@@ -225,6 +253,7 @@ final class AppModel {
             self.largestFiles = stats.1
             self.treeVersion += 1
             self.treeIsStale = false
+            self.restoredFromCache = false
             self.lastScanDate = Date()
             self.lastScanDuration = Date().timeIntervalSince(started)
             self.phase = .ready
@@ -236,6 +265,8 @@ final class AppModel {
             self.volume = VolumeInfo.current()
             self.runAnalysis()
             self.changes.record(tree)
+            let scannedAt = Date()
+            Task.detached(priority: .utility) { _ = try? TreeCache.save(tree, scannedAt: scannedAt) }
         }
     }
 
@@ -299,7 +330,7 @@ final class AppModel {
                 expectedModified: c.isDirectory ? nil : c.modified
             )
         }
-        performClean(requests, title: "Рекомендации: \(requests.count) объектов")
+        performClean(requests, title: "Рекомендации: \(Plural.count(requests.count, "объект", "объекта", "объектов"))")
     }
 
     // MARK: - Карта и лоток
@@ -326,7 +357,7 @@ final class AppModel {
 
     func cleanTray() {
         let requests = tray.map { CleanRequest(path: $0.path, size: $0.size, mode: .trash) }
-        performClean(requests, title: "Лоток очистки: \(requests.count) объектов")
+        performClean(requests, title: "Лоток очистки: \(Plural.count(requests.count, "объект", "объекта", "объектов"))")
     }
 
     func highlight(paths: [String]) {
@@ -384,7 +415,8 @@ final class AppModel {
             if finder.isCancelled { return }
             self.dupGroups = groups
             self.dupSearched = true
-            self.applyKeepRule()
+            // Ничего не отмечаем сами: пользователь отмечает копии кнопкой «Отметить по правилу» или вручную.
+            self.dupMarked = []
         }
     }
 

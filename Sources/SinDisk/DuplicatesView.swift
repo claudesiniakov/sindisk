@@ -90,7 +90,15 @@ struct DuplicatesView: View {
             HSplitView {
                 VStack(spacing: 0) {
                     DuplicateMap(groups: model.dupGroups, selection: $selection)
-                        .frame(minHeight: 160, idealHeight: 230, maxHeight: 300)
+                        .frame(height: 190)
+                    if model.dupGroups.count > DuplicateMap.limit {
+                        Text("На карте — \(DuplicateMap.limit) крупнейших групп из \(model.dupGroups.count); все группы — в списке ниже.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 6)
+                    }
                     Divider()
                     List(model.dupGroups, selection: $selection) { g in
                         GroupRow(group: g)
@@ -115,22 +123,30 @@ struct DuplicatesView: View {
     private var footer: some View {
         HStack {
             VStack(alignment: .leading) {
-                Text("Лишних копий: \(ByteFormat.string(model.duplicateWasteTotal)) в \(model.dupGroups.count) группах")
+                Text("Лишних копий: \(ByteFormat.string(model.duplicateWasteTotal)) в \(Plural.count(model.dupGroups.count, "группе", "группах", "группах"))")
                     .font(.headline)
-                Text("Отмечено к удалению: \(model.markedDuplicateCount) · \(ByteFormat.string(model.markedDuplicateTotal))")
+                Text(model.dupMarked.isEmpty
+                     ? "Ничего не отмечено. Отметьте копии вручную или кнопкой «Отметить по правилу»."
+                     : "Отмечено к удалению: \(Plural.count(model.markedDuplicateCount, "файл", "файла", "файлов")) · \(ByteFormat.string(model.markedDuplicateTotal))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Показать на карте диска") {
-                model.highlight(paths: Array(model.dupMarked))
+            if model.dupMarked.isEmpty {
+                Button("Отметить по правилу") { model.applyKeepRule() }
+                    .buttonStyle(.borderedProminent)
+                    .help("В каждой группе останется одна копия — по правилу «Оставлять» вверху")
+            } else {
+                Button("Снять отметки") { model.dupMarked = [] }
+                Button("Показать на карте диска") {
+                    model.highlight(paths: Array(model.dupMarked))
+                }
+                Button("Заменить клонами") { confirmClone = true }
+                    .disabled(model.cleaning)
+                Button("Удалить отмеченные") { confirmTrash = true }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.cleaning)
             }
-            .disabled(model.dupMarked.isEmpty)
-            Button("Заменить клонами") { confirmClone = true }
-                .disabled(model.dupMarked.isEmpty || model.cleaning)
-            Button("Удалить отмеченные") { confirmTrash = true }
-                .buttonStyle(.borderedProminent)
-                .disabled(model.dupMarked.isEmpty || model.cleaning)
         }
         .padding(12)
         .background(.bar)
@@ -144,9 +160,12 @@ private struct DuplicateMap: View {
     @Binding var selection: DuplicateGroup.ID?
     @State private var hovered: DuplicateGroup.ID?
 
+    /// Больше групп на карте превращаются в нечитаемую мозаику.
+    static let limit = 40
+
     var body: some View {
         GeometryReader { geo in
-            let shown = Array(groups.prefix(300))
+            let shown = Array(groups.prefix(Self.limit))
             let rects = Treemap.squarify(shown.map { Double($0.wasted) },
                                          in: CGRect(origin: .zero, size: geo.size).insetBy(dx: 6, dy: 6))
             Canvas { ctx, _ in
@@ -179,7 +198,7 @@ private struct DuplicateMap: View {
                 if let i = rects.firstIndex(where: { $0.contains(v.location) }) { selection = shown[i].id }
             })
             .help(hovered.flatMap { id in groups.first { $0.id == id } }.map {
-                "\($0.name): \($0.files.count) копии по \(ByteFormat.string($0.size))"
+                "\($0.name): \(Plural.count($0.files.count, "копия", "копии", "копий")) по \(ByteFormat.string($0.size))"
             } ?? "Плитка = группа одинаковых файлов, площадь = лишний объём")
         }
         .accessibilityElement(children: .ignore)
@@ -198,9 +217,11 @@ private struct GroupRow: View {
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 1) {
                 Text(group.name).lineLimit(1).truncationMode(.middle)
-                Text("\(group.files.count) копии по \(ByteFormat.string(group.size))")
+                Text("\(Plural.count(group.files.count, "копия", "копии", "копий")) по \(ByteFormat.string(group.size)) · \(model.displayPath(group.files[0].directory))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             Spacer()
             Text(ByteFormat.string(group.wasted))

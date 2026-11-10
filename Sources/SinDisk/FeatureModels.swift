@@ -213,6 +213,17 @@ final class ChangesModel {
         }
     }
 
+    /// Загружает сохранённые слепки для папки (без записи нового).
+    func load(root: String) {
+        let store = store
+        Task {
+            let snaps = await Task.detached(priority: .utility) { store.load(root: root) }.value
+            self.snapshots = snaps
+            self.baselineIndex = min(1, max(0, snaps.count - 1))
+            self.recompute()
+        }
+    }
+
     func setBaseline(_ index: Int) {
         baselineIndex = index
         recompute()

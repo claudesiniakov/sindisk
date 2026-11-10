@@ -13,10 +13,12 @@ struct HistoryView: View {
                                        description: Text("Здесь появятся все очистки за последние 90 дней."))
             } else {
                 List {
-                    Section {
-                        FreedChart(sessions: model.sessions)
-                            .frame(height: 140)
-                            .padding(.vertical, 6)
+                    if Set(model.sessions.map { Calendar.current.startOfDay(for: $0.date) }).count >= 3 {
+                        Section {
+                            FreedChart(sessions: model.sessions)
+                                .frame(height: 140)
+                                .padding(.vertical, 6)
+                        }
                     }
                     Section("Сессии очистки") {
                         ForEach(model.sessions) { s in
@@ -31,7 +33,7 @@ struct HistoryView: View {
         .confirmationDialog("Вернуть файлы сессии на исходные места?",
                             isPresented: Binding(get: { confirmUndo != nil }, set: { if !$0 { confirmUndo = nil } }),
                             presenting: confirmUndo) { s in
-            Button("Вернуть \(s.records.filter { $0.trashedPath != nil && $0.status == .done }.count) объектов") {
+            Button("Вернуть \(Plural.count(s.records.filter { $0.trashedPath != nil && $0.status == .done }.count, "объект", "объекта", "объектов"))") {
                 model.undo(s)
             }
         } message: { _ in
@@ -80,6 +82,13 @@ private struct SessionRow: View {
                     .frame(width: 90, alignment: .trailing)
                 if session.canUndo {
                     Button("Отменить", action: onUndo)
+                        .frame(width: 96)
+                } else {
+                    Text(session.undone ? "" : "без отмены")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 96)
+                        .help("Удалено окончательно (Корзина или команда очистки) — вернуть нельзя")
                 }
             }
         }

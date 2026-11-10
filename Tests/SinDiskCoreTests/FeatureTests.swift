@@ -213,3 +213,56 @@ final class SafetyFixTests: XCTestCase {
         XCTAssertEqual(root.size, 0)
     }
 }
+
+final class TreeCacheTests: XCTestCase {
+    func testRoundTripPreservesTree() throws {
+        let t = try TempTree()
+        try t.file("a/one.bin", bytes: 10_000)
+        try t.file("a/deep/two.mov", bytes: 250_000)
+        try t.file("Файл с пробелами.txt", bytes: 300)
+        try t.file("App.app/Contents/MacOS/bin", bytes: 4_000)
+        try FileManager.default.createSymbolicLink(atPath: t.root + "/link", withDestinationPath: t.root + "/a")
+        let original = DiskScanner().scan(path: t.root)
+        let when = Date(timeIntervalSince1970: 1_800_000_123)
+
+        let url = URL(fileURLWithPath: t.root + "/.cache.bin")
+        try TreeCache.save(original, scannedAt: when, to: url)
+        let loaded = try XCTUnwrap(TreeCache.load(from: url))
+
+        XCTAssertEqual(loaded.scannedAt, when)
+        let copy = loaded.root
+        XCTAssertEqual(copy.path, original.path)
+        XCTAssertEqual(copy.size, original.size)
+        XCTAssertEqual(copy.logicalSize, original.logicalSize)
+        XCTAssertEqual(copy.fileCount, original.fileCount)
+        XCTAssertEqual(copy.children.map(\.name), original.children.map(\.name))
+        let movie = try XCTUnwrap(copy.node(atPath: t.root + "/a/deep/two.mov"))
+        XCTAssertEqual(movie.size, original.node(atPath: t.root + "/a/deep/two.mov")?.size)
+        XCTAssertEqual(movie.modified, original.node(atPath: t.root + "/a/deep/two.mov")?.modified)
+        XCTAssertTrue(movie.parent?.parent?.parent === copy)
+        XCTAssertEqual(copy.child(named: "App.app")?.isPackage, original.child(named: "App.app")?.isPackage)
+        XCTAssertEqual(copy.child(named: "link")?.isSymlink, true)
+        XCTAssertNotNil(copy.child(named: "Файл с пробелами.txt"))
+    }
+
+    func testCorruptedCacheIsRejected() throws {
+        let t = try TempTree()
+        try t.file("x.bin", bytes: 1_000)
+        let data = TreeCache.encode(DiskScanner().scan(path: t.root), scannedAt: Date())
+        XCTAssertNotNil(TreeCache.decode(data))
+        XCTAssertNil(TreeCache.decode(data.prefix(data.count - 5)))
+        XCTAssertNil(TreeCache.decode(Data("nope".utf8)))
+        XCTAssertNil(TreeCache.decode(data + Data([0])))
+        XCTAssertNil(TreeCache.load(from: URL(fileURLWithPath: t.root + "/missing.bin")))
+    }
+
+    func testPlurals() {
+        XCTAssertEqual(Plural.count(1, "объект", "объекта", "объектов"), "1 объект")
+        XCTAssertEqual(Plural.count(2, "объект", "объекта", "объектов"), "2 объекта")
+        XCTAssertEqual(Plural.count(5, "объект", "объекта", "объектов"), "5 объектов")
+        XCTAssertEqual(Plural.form(11, "файл", "файла", "файлов"), "файлов")
+        XCTAssertEqual(Plural.form(21, "файл", "файла", "файлов"), "файл")
+        XCTAssertEqual(Plural.form(42, "приложение", "приложения", "приложений"), "приложения")
+        XCTAssertEqual(Plural.form(112, "копия", "копии", "копий"), "копий")
+    }
+}

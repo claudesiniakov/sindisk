@@ -48,8 +48,11 @@ struct ChangesView: View {
                         }
                     }
                 }
-                TotalsChart(snapshots: ch.snapshots)
-                    .frame(height: 110)
+                // График на двух точках ничего не показывает — появляется с третьего сканирования.
+                if ch.snapshots.count >= 3 {
+                    TotalsChart(snapshots: ch.snapshots)
+                        .frame(height: 110)
+                }
             }
             .padding(16)
             Divider()
@@ -105,7 +108,8 @@ private struct ChangeRow: View {
                 .font(.title3)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(change.name).lineLimit(1).truncationMode(.middle)
+                    Text(change.path.split(separator: "/").suffix(2).joined(separator: " / "))
+                        .lineLimit(1).truncationMode(.middle)
                     if change.isNew { tag("новое", .blue) }
                     if change.isGone { tag("удалено", .secondary) }
                 }

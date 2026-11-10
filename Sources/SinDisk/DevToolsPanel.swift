@@ -27,9 +27,21 @@ struct DevToolsPanel: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             Divider()
-            ForEach(Array(DevTool.allCases.enumerated()), id: \.element) { index, tool in
+            // Доступные инструменты — строками, недоступные — одной сноской, чтобы не занимать место.
+            let ready = DevTool.allCases.filter { dev.statuses[$0]?.ready == true || dev.running == $0 }
+            let unavailable = DevTool.allCases.filter { !ready.contains($0) }
+            ForEach(Array(ready.enumerated()), id: \.element) { index, tool in
                 if index > 0 { Divider().padding(.leading, 52) }
                 row(tool, dev.statuses[tool])
+            }
+            if !unavailable.isEmpty {
+                if !ready.isEmpty { Divider() }
+                Text(unavailable.map { "\($0.title): \(dev.statuses[$0]?.note ?? "проверка…")" }.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))

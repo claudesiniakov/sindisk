@@ -34,3 +34,18 @@ public enum ByteFormat {
         return Int64(value * multiplier)
     }
 }
+
+/// Русские формы множественного числа: 1 файл, 2 файла, 5 файлов.
+public enum Plural {
+    public static func form(_ n: Int, _ one: String, _ few: String, _ many: String) -> String {
+        let n100 = abs(n) % 100, n10 = abs(n) % 10
+        if n100 >= 11, n100 <= 14 { return many }
+        if n10 == 1 { return one }
+        if n10 >= 2, n10 <= 4 { return few }
+        return many
+    }
+
+    public static func count(_ n: Int, _ one: String, _ few: String, _ many: String) -> String {
+        "\(n.formatted()) \(form(n, one, few, many))"
+    }
+}

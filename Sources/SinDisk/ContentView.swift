@@ -21,6 +21,8 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 if model.treeIsStale {
                     StaleBanner()
+                } else if model.restoredFromCache, model.phase == .ready, let date = model.lastScanDate {
+                    RestoredBanner(date: date)
                 }
                 detail
             }
@@ -81,6 +83,7 @@ struct ScanToolbar: View {
                 Button("Выбрать папку…") { model.chooseFolderAndScan() }
             } label: {
                 Label("Сканировать", systemImage: "arrow.clockwise")
+                    .labelStyle(.titleAndIcon)
             } primaryAction: {
                 model.startScan()
             }
@@ -98,7 +101,7 @@ struct ScanStatusFooter: View {
             case .idle:
                 Text("Диск ещё не сканирован")
             case .scanning:
-                Text("Сканирование… \(model.progress.files.formatted()) файлов")
+                Text("Сканирование… \(Plural.count(model.progress.files, "файл", "файла", "файлов"))")
                 Text(ByteFormat.string(model.progress.bytes))
                     .monospacedDigit()
             case .ready:
@@ -108,7 +111,7 @@ struct ScanStatusFooter: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if let root = model.root {
-                    Text("\(ByteFormat.string(root.size)) · \(root.fileCount.formatted()) файлов")
+                    Text("\(ByteFormat.string(root.size)) · \(Plural.count(root.fileCount, "файл", "файла", "файлов"))")
                         .monospacedDigit()
                 }
             }
@@ -137,6 +140,24 @@ struct StaleBanner: View {
     }
 }
 
+struct RestoredBanner: View {
+    @Environment(AppModel.self) private var model
+    let date: Date
+
+    var body: some View {
+        HStack {
+            Image(systemName: "clock.arrow.circlepath")
+            Text("Показаны данные сканирования от \(date.formatted(date: .abbreviated, time: .shortened)) (\(date.formatted(.relative(presentation: .named)))).")
+            Spacer()
+            Button("Сканировать заново") { model.startScan() }
+        }
+        .font(.callout)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.08))
+    }
+}
+
 struct EmptyScanView: View {
     @Environment(AppModel.self) private var model
     var message = "Сначала просканируйте диск."
@@ -148,7 +169,9 @@ struct EmptyScanView: View {
             Text(message)
         } actions: {
             if model.phase == .scanning {
-                ProgressView("Сканирование… \(model.progress.files.formatted()) файлов")
+                ProgressView("Сканирование… \(Plural.count(model.progress.files, "файл", "файла", "файлов"))")
+            } else if model.restoring {
+                ProgressView("Открываю прошлое сканирование…")
             } else {
                 Button("Сканировать домашнюю папку") { model.startScan(path: model.home) }
                     .buttonStyle(.borderedProminent)
@@ -171,7 +194,7 @@ struct CleanResultView: View {
                 VStack(alignment: .leading) {
                     Text("Освобождено \(ByteFormat.string(session.freed))")
                         .font(.title2.bold())
-                    Text("\(session.doneCount) объектов · \(session.title)")
+                    Text("\(Plural.count(session.doneCount, "объект", "объекта", "объектов")) · \(session.title)")
                         .foregroundStyle(.secondary)
                 }
             }
