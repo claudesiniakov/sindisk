@@ -268,6 +268,16 @@ final class AppModel {
         }
     }
 
+    /// Выбрать всё до указанного уровня риска включительно.
+    func selectAll(maxRisk: Risk) {
+        selected = Set(categories.filter { $0.category.risk <= maxRisk }.flatMap(\.items).map(\.path))
+    }
+
+    /// Выбор по умолчанию: то, что SinDisk отмечает сам после анализа.
+    func selectRecommended() {
+        selected = Set(categories.flatMap(\.items).filter(\.selectedByDefault).map(\.path))
+    }
+
     var selectedCandidates: [Candidate] {
         categories.flatMap(\.items).filter { selected.contains($0.path) }
     }

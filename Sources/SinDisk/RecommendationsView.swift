@@ -4,6 +4,7 @@ import SinDiskCore
 struct RecommendationsView: View {
     @Environment(AppModel.self) private var model
     @State private var confirm = false
+    @State private var expanded: Set<CleanupCategory> = []
 
     var body: some View {
         Group {
@@ -20,11 +21,15 @@ struct RecommendationsView: View {
                         DevToolsPanel()
                             .padding(.bottom, 6)
                         ForEach(model.categories) { result in
-                            CategoryCard(result: result)
+                            CategoryCard(result: result, expanded: Binding(
+                                get: { expanded.contains(result.category) },
+                                set: { if $0 { expanded.insert(result.category) } else { expanded.remove(result.category) } }
+                            ))
                         }
                     }
                     .padding(20)
                 }
+                .safeAreaInset(edge: .top, spacing: 0) { selectionBar }
                 .safeAreaInset(edge: .bottom) { bottomBar }
             }
         }
@@ -36,13 +41,54 @@ struct RecommendationsView: View {
         }
     }
 
+    /// Итог найденного и массовый выбор.
+    private var selectionBar: some View {
+        let total = model.categories.reduce(Int64(0)) { $0 + $1.total }
+        let allExpanded = expanded.count == model.categories.count
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Найдено \(ByteFormat.string(total)) в \(model.categories.count) категориях")
+                    .font(.headline)
+                    .monospacedDigit()
+                Text("Безопасно (низкий риск): \(ByteFormat.string(model.safeTotal))")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            }
+            Spacer()
+            Button(allExpanded ? "Свернуть все" : "Развернуть все") {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    expanded = allExpanded ? [] : Set(model.categories.map(\.category))
+                }
+            }
+            Menu {
+                Button("Рекомендуемые") { model.selectRecommended() }
+                Button("Только низкий риск") { model.selectAll(maxRisk: .low) }
+                Button("Всё, кроме высокого риска") { model.selectAll(maxRisk: .medium) }
+                    .keyboardShortcut("a")
+                Button("Всё, включая высокий риск") { model.selectAll(maxRisk: .high) }
+                Divider()
+                Button("Снять выбор") { model.selected.removeAll() }
+                    .keyboardShortcut("a", modifiers: [.command, .shift])
+            } label: {
+                Label("Выбрать", systemImage: "checklist")
+            }
+            .fixedSize()
+            Button("Снять выбор") { model.selected.removeAll() }
+                .disabled(model.selected.isEmpty)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
     private var bottomBar: some View {
         HStack {
             VStack(alignment: .leading) {
-                Text("Выбрано: \(ByteFormat.string(model.selectedTotal))")
+                Text(model.selected.isEmpty ? "Ничего не выбрано" : "Выбрано: \(ByteFormat.string(model.selectedTotal))")
                     .font(.headline)
                     .monospacedDigit()
-                Text("\(model.selectedCandidates.count) объектов")
+                Text(model.selected.isEmpty ? "Отметьте категории или воспользуйтесь меню «Выбрать»" : "\(model.selectedCandidates.count) объектов")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -77,7 +123,7 @@ struct RecommendationsView: View {
 private struct CategoryCard: View {
     @Environment(AppModel.self) private var model
     let result: CategoryResult
-    @State private var expanded = false
+    @Binding var expanded: Bool
     @State private var shown = 50
 
     var body: some View {
