@@ -14,6 +14,11 @@ final class Updater {
         case downloading(ReleaseInfo)
         case installing(ReleaseInfo)
         case failed(String)
+
+        var isInstalling: Bool {
+            if case .installing = self { return true }
+            return false
+        }
     }
 
     var state: State = .idle
@@ -118,85 +123,181 @@ final class Updater {
 
     // MARK: - Установка
 
+    @ObservationIgnored private var installTask: Task<Void, Never>?
+
+    func startInstall(_ release: ReleaseInfo) {
+        guard installTask == nil else { return }
+        installTask = Task {
+            await install(release)
+            installTask = nil
+        }
+    }
+
+    func cancelInstall() {
+        installTask?.cancel()
+        installTask = nil
+        UpdateLog.write("Установка отменена пользователем")
+        if let r = release { state = .available(r) }
+        step = ""
+    }
+
+    /// Текущий шаг установки (показывается в окне и пишется в журнал).
+    var step = ""
+
+    private func setStep(_ text: String) {
+        step = text
+        UpdateLog.write(text)
+    }
+
+    private static let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 300
+        config.httpAdditionalHeaders = ["User-Agent": "SinDisk-Updater"]
+        return URLSession(configuration: config)
+    }()
+
     func install(_ release: ReleaseInfo) async {
         guard canInstallInPlace else {
             openReleasePage()
             return
         }
+        UpdateLog.write("— Обновление \(currentVersionString) → \(release.version), бандл \(Bundle.main.bundleURL.path)")
         state = .downloading(release)
         do {
             let work = FileManager.default.temporaryDirectory
                 .appendingPathComponent("SinDisk-update-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
 
-            let (downloaded, response) = try await URLSession.shared.download(from: release.archiveURL)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw CleanError("Не удалось скачать обновление") }
+            setStep("Загрузка \(release.archiveURL.lastPathComponent)…")
+            let (downloaded, response) = try await Self.session.download(from: release.archiveURL)
+            try Task.checkCancellation()
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard code == 200 else { throw CleanError("Не удалось скачать обновление (HTTP \(code))") }
             let archive = work.appendingPathComponent(ReleaseFeed.archiveName)
             try FileManager.default.moveItem(at: downloaded, to: archive)
 
             if let sumURL = release.checksumURL {
-                let (sumData, _) = try await URLSession.shared.data(from: sumURL)
+                setStep("Проверка контрольной суммы…")
+                let (sumData, _) = try await Self.session.data(from: sumURL)
                 guard let expected = UpdateVerifier.parseChecksum(String(decoding: sumData, as: UTF8.self)) else {
                     throw CleanError("Некорректная контрольная сумма в релизе")
                 }
-                let actual = try await Task.detached { try UpdateVerifier.sha256(of: archive) }.value
+                let actual = try await Self.background { try UpdateVerifier.sha256(of: archive) }
                 guard actual == expected else { throw CleanError("Контрольная сумма архива не совпала — установка отменена") }
             }
+            try Task.checkCancellation()
+
+            setStep("Распаковка…")
+            let newApp = try await Self.background { try Self.unpack(archive: archive, in: work) }
+            setStep("Проверка подписи и версии…")
+            try await Self.background { try Self.verify(newApp: newApp, expected: release.version) }
+            try Task.checkCancellation()
 
             state = .installing(release)
-            let newApp = try await Task.detached { try Self.unpackAndVerify(archive: archive, in: work, expected: release.version) }.value
-            try launchReplacement(newApp: newApp)
+            setStep("Перезапуск…")
+            try launchReplacement(newApp: newApp, log: UpdateLog.url)
+            showSheet = false
+            try? await Task.sleep(for: .milliseconds(300))
+            UpdateLog.write("Завершение приложения для замены")
             NSApp.terminate(nil)
+            // Если что-то помешало штатному выходу — завершаемся сами: скрипт замены ждёт нашего PID.
+            try? await Task.sleep(for: .seconds(3))
+            UpdateLog.write("terminate не сработал — принудительный выход")
+            exit(0)
+        } catch is CancellationError {
+            return
         } catch {
-            state = .failed(error.localizedDescription)
+            UpdateLog.write("Ошибка: \(error.localizedDescription)")
+            state = .failed(error.localizedDescription + "\n\nПодробности: ~/Library/Logs/SinDisk/update.log")
+            step = ""
             showSheet = true
         }
     }
 
-    nonisolated private static func unpackAndVerify(archive: URL, in work: URL, expected: AppVersion) throws -> URL {
+    /// Блокирующая работа — на обычной очереди GCD, не в пуле Swift Concurrency.
+    nonisolated private static func background<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(with: Result { try work() })
+            }
+        }
+    }
+
+    nonisolated private static func unpack(archive: URL, in work: URL) throws -> URL {
         let unpacked = work.appendingPathComponent("unpacked", isDirectory: true)
         try run("/usr/bin/ditto", ["-x", "-k", archive.path, unpacked.path])
         let newApp = unpacked.appendingPathComponent("SinDisk.app")
-        guard let bundle = Bundle(url: newApp),
-              bundle.bundleIdentifier == Bundle.main.bundleIdentifier else {
+        guard FileManager.default.fileExists(atPath: newApp.path) else {
             throw CleanError("В архиве не найдено приложение SinDisk")
         }
-        let version = (bundle.infoDictionary?["CFBundleShortVersionString"] as? String).flatMap(AppVersion.init)
-        guard version == expected else { throw CleanError("Версия в архиве не совпадает с релизом") }
-        try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", newApp.path])
-        _ = try? run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", newApp.path])
         return newApp
     }
 
+    nonisolated private static func verify(newApp: URL, expected: AppVersion) throws {
+        guard let info = NSDictionary(contentsOf: newApp.appendingPathComponent("Contents/Info.plist")),
+              info["CFBundleIdentifier"] as? String == Bundle.main.bundleIdentifier else {
+            throw CleanError("Архив содержит другое приложение")
+        }
+        let version = (info["CFBundleShortVersionString"] as? String).flatMap(AppVersion.init)
+        guard version == expected else {
+            throw CleanError("Версия в архиве (\(version?.description ?? "?")) не совпадает с релизом \(expected)")
+        }
+        try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", newApp.path])
+        _ = try? run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", newApp.path])
+    }
+
+    /// Запуск внешней утилиты с тайм-аутом; ожидание через terminationHandler, без run loop.
     @discardableResult
-    nonisolated private static func run(_ tool: String, _ args: [String]) throws -> Int32 {
+    nonisolated private static func run(_ tool: String, _ args: [String], timeout: TimeInterval = 60) throws -> Int32 {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: tool)
         p.arguments = args
+        p.standardInput = FileHandle.nullDevice
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
+        let done = DispatchSemaphore(value: 0)
+        p.terminationHandler = { _ in done.signal() }
         try p.run()
-        p.waitUntilExit()
+        let name = (tool as NSString).lastPathComponent
+        if done.wait(timeout: .now() + timeout) == .timedOut {
+            p.terminate()
+            throw CleanError("\(name) не ответил за \(Int(timeout)) с")
+        }
+        UpdateLog.write("\(name) → код \(p.terminationStatus)")
         guard p.terminationStatus == 0 else {
-            throw CleanError("\((tool as NSString).lastPathComponent) завершился с кодом \(p.terminationStatus)")
+            throw CleanError("\(name) завершился с кодом \(p.terminationStatus)")
         }
         return p.terminationStatus
     }
 
-    /// Скрипт ждёт выхода приложения, меняет бандл (с откатом при ошибке) и запускает новую версию.
-    private func launchReplacement(newApp: URL) throws {
+    /// Скрипт ждёт выхода приложения (не дольше 30 с), меняет бандл с откатом при ошибке
+    /// и запускает новую версию. Весь вывод — в журнал обновлений.
+    private func launchReplacement(newApp: URL, log: URL) throws {
         let script = """
         #!/bin/sh
-        PID="$1"; OLD="$2"; NEW="$3"
-        while kill -0 "$PID" 2>/dev/null; do sleep 0.2; done
+        PID="$1"; OLD="$2"; NEW="$3"; LOG="$4"
+        exec >>"$LOG" 2>&1
+        trap '' HUP
+        echo "$(date '+%F %T') скрипт: жду выхода PID $PID"
+        i=0
+        while kill -0 "$PID" 2>/dev/null; do
+          i=$((i+1))
+          if [ $i -gt 150 ]; then echo "приложение не вышло за 30 с — завершаю"; kill -9 "$PID"; sleep 1; fi
+          sleep 0.2
+        done
         BACKUP="$OLD.sindisk-previous"
         rm -rf "$BACKUP"
         if mv "$OLD" "$BACKUP"; then
           if mv "$NEW" "$OLD" || ditto "$NEW" "$OLD"; then
             rm -rf "$BACKUP"
+            echo "$(date '+%F %T') скрипт: новая версия установлена"
           else
+            echo "$(date '+%F %T') скрипт: замена не удалась, возвращаю прежнюю версию"
             rm -rf "$OLD"; mv "$BACKUP" "$OLD"
           fi
+        else
+          echo "$(date '+%F %T') скрипт: не удалось убрать старую версию"
         fi
         open "$OLD"
         """
@@ -205,8 +306,34 @@ final class Updater {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
         p.arguments = [scriptURL.path, String(ProcessInfo.processInfo.processIdentifier),
-                       Bundle.main.bundleURL.path, newApp.path]
+                       Bundle.main.bundleURL.path, newApp.path, log.path]
+        p.standardInput = FileHandle.nullDevice
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
         try p.run()
+        UpdateLog.write("Скрипт замены запущен, PID \(p.processIdentifier)")
+    }
+}
+
+/// Журнал обновлений: ~/Library/Logs/SinDisk/update.log
+enum UpdateLog {
+    static var url: URL {
+        let dir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Logs/SinDisk", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("update.log")
+    }
+
+    static func write(_ line: String) {
+        let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))
+        let data = Data("\(stamp) \(line)\n".utf8)
+        let url = url
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: url)
+        }
     }
 }
 
@@ -237,7 +364,7 @@ struct UpdateSheet: View {
         }
         .padding(24)
         .frame(width: 520)
-        .interactiveDismissDisabled(updater.isBusy)
+        .interactiveDismissDisabled(updater.state.isInstalling)
     }
 
     @ViewBuilder private func releaseView(_ release: ReleaseInfo) -> some View {
@@ -273,17 +400,19 @@ struct UpdateSheet: View {
             switch updater.state {
             case .downloading:
                 ProgressView().controlSize(.small)
-                Text("Загрузка и проверка…")
+                Text(updater.step.isEmpty ? "Подготовка…" : updater.step)
+                Spacer()
+                Button("Отменить") { updater.cancelInstall() }
             case .installing:
                 ProgressView().controlSize(.small)
-                Text("Установка, приложение перезапустится…")
+                Text(updater.step.isEmpty ? "Установка, приложение перезапустится…" : updater.step)
             default:
                 Button("Пропустить версию") { updater.skip(release) }
                 Button("Позже") { updater.remindLater() }
                 Spacer()
                 if updater.canInstallInPlace {
                     Button("Установить и перезапустить") {
-                        Task { await updater.install(release) }
+                        updater.startInstall(release)
                     }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
