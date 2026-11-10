@@ -121,12 +121,24 @@ final class SnapshotTests: XCTestCase {
 
         let changes = SnapshotDiff.compare(old: before, new: after, minDelta: 1_000_000)
         let byPath = Dictionary(uniqueKeysWithValues: changes.map { ($0.path, $0) })
-        XCTAssertNotNil(byPath["Projects/app/build"], "Рост показан на уровне папки, где он произошёл")
-        XCTAssertNil(byPath["Projects/app"], "Родитель, рост которого объясняется дочерней папкой, скрыт")
+        // Рост объясняется одним новым файлом — показан он, а не цепочка родительских папок.
+        XCTAssertTrue(byPath["Projects/app/build/out2.bin"]?.isNew ?? false)
+        XCTAssertNil(byPath["Projects/app/build"])
+        XCTAssertNil(byPath["Projects/app"])
         XCTAssertNil(byPath["Projects"])
         XCTAssertTrue(byPath["Movies/old.mov"]?.isGone ?? false)
         XCTAssertTrue(changes.contains { $0.path.hasPrefix("Downloads") && $0.isNew })
         XCTAssertEqual(changes.first.map { abs($0.delta) }, changes.map { abs($0.delta) }.max())
+    }
+
+    func testFolderShownWhenGrowthIsSpreadOut() {
+        let old = ScanSnapshot(rootPath: "/r", date: Date(timeIntervalSince1970: 1), total: 100, fileCount: 1,
+                               sizes: ["Mail": 50_000_000, "Mail/A": 20_000_000, "Mail/B": 20_000_000])
+        let new = ScanSnapshot(rootPath: "/r", date: Date(timeIntervalSince1970: 2), total: 200, fileCount: 1,
+                               sizes: ["Mail": 110_000_000, "Mail/A": 50_000_000, "Mail/B": 50_000_000])
+        let changes = SnapshotDiff.compare(old: old, new: new, minDelta: 10_000_000)
+        XCTAssertEqual(changes.first?.path, "Mail", "Рост поровну в двух папках — показан их общий родитель первым")
+        XCTAssertEqual(changes.count, 3)
     }
 
     func testStoreKeepsNewestFirst() throws {
