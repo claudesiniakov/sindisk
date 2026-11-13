@@ -46,12 +46,38 @@ final class Updater {
         autoCheck = UserDefaults.standard.object(forKey: Keys.autoCheck) as? Bool ?? true
     }
 
-    /// Установка возможна только из собранного .app с правом записи в его папку.
-    var canInstallInPlace: Bool {
-        let bundle = Bundle.main.bundleURL
-        guard bundle.pathExtension == "app", currentVersion != nil else { return false }
-        return FileManager.default.isWritableFile(atPath: bundle.deletingLastPathComponent().path)
+    /// Настоящее расположение бандла. Приложение, запущенное из карантина (например, прямо из
+    /// «Загрузок»), система выполняет из временной копии только для чтения (App Translocation) —
+    /// обновлять нужно исходный бандл, а не её.
+    static let installURL: URL = {
+        let running = Bundle.main.bundleURL
+        guard running.path.contains("/AppTranslocation/") else { return running }
+        typealias Resolver = @convention(c) (CFURL, UnsafeMutablePointer<Unmanaged<CFError>?>?) -> Unmanaged<CFURL>?
+        guard let security = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY),
+              let symbol = dlsym(security, "SecTranslocateCreateOriginalPathForURL") else { return running }
+        let resolve = unsafeBitCast(symbol, to: Resolver.self)
+        guard let original = resolve(running as CFURL, nil)?.takeRetainedValue() else { return running }
+        return original as URL
+    }()
+
+    /// Почему установка на месте невозможна; nil — можно устанавливать.
+    var installBlocker: String? {
+        let bundle = Self.installURL
+        if bundle.pathExtension != "app" || currentVersion == nil {
+            return "Приложение запущено не из собранного SinDisk.app"
+        }
+        if bundle.path.contains("/AppTranslocation/") {
+            return "Перенесите SinDisk в «Программы» через Finder и запустите оттуда"
+        }
+        let folder = bundle.deletingLastPathComponent().path
+        if !FileManager.default.isWritableFile(atPath: folder) {
+            return "Нет права записи в папку \(folder)"
+        }
+        return nil
     }
+
+    /// Установка возможна только из собранного .app с правом записи в его папку.
+    var canInstallInPlace: Bool { installBlocker == nil }
 
     var release: ReleaseInfo? {
         switch state {
@@ -83,13 +109,20 @@ final class Updater {
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             request.setValue("SinDisk-Updater", forHTTPHeaderField: "User-Agent")
             request.timeoutInterval = 20
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                throw ReleaseFeedError.invalidResponse
-            }
-            let release = try ReleaseFeed.parse(data)
+            let (data, response) = try await Self.session.data(for: request)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            // Проверка засчитывается только при внятном ответе: после сбоя (например, лимита
+            // запросов) следующая автопроверка не откладывается на сутки.
+            guard code == 200 || code == 404 else { throw ReleaseFeedError.invalidResponse }
             lastCheck = Date()
             UserDefaults.standard.set(lastCheck, forKey: Keys.lastCheck)
+            // 404 — в репозитории ещё нет ни одного релиза.
+            if code == 404 {
+                state = .upToDate
+                if userInitiated { showUpToDate = true }
+                return
+            }
+            let release = try ReleaseFeed.parse(data)
 
             let newer = currentVersion.map { release.version > $0 } ?? true
             let skipped = UserDefaults.standard.string(forKey: Keys.skipped) == release.version.description
@@ -101,8 +134,13 @@ final class Updater {
                 if userInitiated { showUpToDate = true }
             }
         } catch {
-            state = .failed(error.localizedDescription)
-            if userInitiated { showSheet = true }
+            // Фоновая проверка не должна показывать ошибку — только ручная.
+            if userInitiated {
+                state = .failed(error.localizedDescription)
+                showSheet = true
+            } else {
+                state = .idle
+            }
         }
     }
 
@@ -162,7 +200,7 @@ final class Updater {
             openReleasePage()
             return
         }
-        UpdateLog.write("— Обновление \(currentVersionString) → \(release.version), бандл \(Bundle.main.bundleURL.path)")
+        UpdateLog.write("— Обновление \(currentVersionString) → \(release.version), бандл \(Self.installURL.path)")
         state = .downloading(release)
         do {
             let work = FileManager.default.temporaryDirectory
@@ -177,15 +215,17 @@ final class Updater {
             let archive = work.appendingPathComponent(ReleaseFeed.archiveName)
             try FileManager.default.moveItem(at: downloaded, to: archive)
 
-            if let sumURL = release.checksumURL {
-                setStep("Проверка контрольной суммы…")
-                let (sumData, _) = try await Self.session.data(from: sumURL)
-                guard let expected = UpdateVerifier.parseChecksum(String(decoding: sumData, as: UTF8.self)) else {
-                    throw CleanError("Некорректная контрольная сумма в релизе")
-                }
-                let actual = try await Self.background { try UpdateVerifier.sha256(of: archive) }
-                guard actual == expected else { throw CleanError("Контрольная сумма архива не совпала — установка отменена") }
+            // Без контрольной суммы обновление не ставится.
+            guard let sumURL = release.checksumURL else {
+                throw CleanError("В релизе нет контрольной суммы — установка отменена")
             }
+            setStep("Проверка контрольной суммы…")
+            let (sumData, _) = try await Self.session.data(from: sumURL)
+            guard let expected = UpdateVerifier.parseChecksum(String(decoding: sumData, as: UTF8.self)) else {
+                throw CleanError("Некорректная контрольная сумма в релизе")
+            }
+            let actual = try await Self.background { try UpdateVerifier.sha256(of: archive) }
+            guard actual == expected else { throw CleanError("Контрольная сумма архива не совпала — установка отменена") }
             try Task.checkCancellation()
 
             setStep("Распаковка…")
@@ -291,6 +331,7 @@ final class Updater {
         if mv "$OLD" "$BACKUP"; then
           if mv "$NEW" "$OLD" || ditto "$NEW" "$OLD"; then
             rm -rf "$BACKUP"
+            xattr -dr com.apple.quarantine "$OLD" 2>/dev/null
             echo "$(date '+%F %T') скрипт: новая версия установлена"
           else
             echo "$(date '+%F %T') скрипт: замена не удалась, возвращаю прежнюю версию"
@@ -306,7 +347,7 @@ final class Updater {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
         p.arguments = [scriptURL.path, String(ProcessInfo.processInfo.processIdentifier),
-                       Bundle.main.bundleURL.path, newApp.path, log.path]
+                       Self.installURL.path, newApp.path, log.path]
         p.standardInput = FileHandle.nullDevice
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
@@ -391,7 +432,7 @@ struct UpdateSheet: View {
             .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
         }
         if !updater.canInstallInPlace {
-            Text("Автоустановка недоступна: приложение запущено не из .app или нет прав на запись в его папку. Скачайте новую версию со страницы релиза.")
+            Text("Автоустановка недоступна: \(updater.installBlocker ?? ""). Новую версию можно скачать со страницы релиза.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

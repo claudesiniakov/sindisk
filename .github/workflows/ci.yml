@@ -12,15 +12,17 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Toolchain
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.4.app || true
+          # Сборка актуальным SDK: приложение получает текущее оформление системы.
+          xcodebuild -version
+          sw_vers
           swift --version
 
       - name: Build
@@ -32,12 +34,30 @@ jobs:
       - name: Package SinDisk.app
         run: ./scripts/build-app.sh
 
-      - uses: actions/upload-artifact@v4
+      - name: Smoke test (приложение не падает при запуске)
+        run: |
+          build/SinDisk.app/Contents/MacOS/SinDisk > smoke.log 2>&1 &
+          PID=$!
+          sleep 10
+          screencapture -x build/screen.png || true
+          if kill -0 $PID 2>/dev/null; then
+            echo "Процесс жив через 10 с"
+            kill $PID
+          else
+            wait $PID || echo "Код выхода: $?"
+            cat smoke.log
+            sleep 5
+            for f in ~/Library/Logs/DiagnosticReports/SinDisk*; do [ -f "$f" ] && head -120 "$f"; done
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v7
         with:
           name: SinDisk-app
           path: |
             build/SinDisk.zip
             build/SinDisk.zip.sha256
+            build/screen.png
 
       - name: Release notes from tag message
         if: startsWith(github.ref, 'refs/tags/v')
@@ -46,11 +66,11 @@ jobs:
           git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" | sed '/-----BEGIN PGP/,$d' > build/RELEASE_NOTES.md
           cat build/RELEASE_NOTES.md
 
+      # Публикация штатным gh, без сторонних действий с правом записи в репозиторий.
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          body_path: build/RELEASE_NOTES.md
-          files: |
-            build/SinDisk.zip
-            build/SinDisk.zip.sha256
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" build/SinDisk.zip build/SinDisk.zip.sha256 \
+            --verify-tag --title "${GITHUB_REF_NAME}" --notes-file build/RELEASE_NOTES.md
